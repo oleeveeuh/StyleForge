@@ -166,7 +166,6 @@ def compile_inline(
         cuda_sources=cuda_source,
         functions=functions or [],
         extra_cuda_cflags=extra_cuda_cflags,
-        extra_cxx_cflags=extra_cxx_cflags,
         build_directory=str(build_directory),
         verbose=verbose,
         with_pybind11=with_pybind11
