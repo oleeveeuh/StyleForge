@@ -1,0 +1,37 @@
+# Build artifacts
+build/
+*.so
+*.o
+*.a
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Checkpoints (large files)
+checkpoints/*.pth
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# Compiled CUDA
+*.ptx
+*.cubin
