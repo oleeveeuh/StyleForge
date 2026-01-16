@@ -24,6 +24,7 @@ import torch.nn as nn
 import time
 import gc
 import statistics
+import math
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass, field
@@ -253,7 +254,9 @@ class AttentionBenchmark:
         """Copy weights from PyTorch to fused model for fair comparison."""
         with torch.no_grad():
             fused_model.w_qkv.copy_(pytorch_model.in_proj_weight)
-            fused_model.w_out.copy_(pytorch_model.out_proj.weight.T)
+            # Note: PyTorch's out_proj.weight is [embed_dim, embed_dim]
+            # The kernel expects the same layout (row-major)
+            fused_model.w_out.copy_(pytorch_model.out_proj.weight)
 
             if pytorch_model.in_proj_bias is not None and fused_model.bias_qkv is not None:
                 fused_model.bias_qkv.copy_(pytorch_model.in_proj_bias)
@@ -493,8 +496,11 @@ class AttentionBenchmark:
         print_info("Benchmarking Fused CUDA...")
         fused_result = self.benchmark_fused(x, fused_model, warmup, iters)
 
-        # Compute speedup
-        speedup = pytorch_result.mean_ms / fused_result.mean_ms
+        # Compute speedup (handle edge cases)
+        if fused_result.mean_ms > 0 and not math.isinf(fused_result.mean_ms) and not math.isnan(fused_result.mean_ms):
+            speedup = pytorch_result.mean_ms / fused_result.mean_ms
+        else:
+            speedup = 0.0
 
         # Create comparison result
         comparison = ComparisonResult(

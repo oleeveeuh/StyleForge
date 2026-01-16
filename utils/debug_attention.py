@@ -113,7 +113,8 @@ def debug_attention_comparison():
             attn_fused.w_qkv.copy_(torch.cat([
                 w_q_pt, w_k_pt, w_v_pt
             ], dim=0))
-            attn_fused.w_out.copy_(attn_pytorch.out_proj.weight.T)
+            # Note: No transpose needed - kernel expects same layout as PyTorch
+            attn_fused.w_out.copy_(attn_pytorch.out_proj.weight)
             if attn_pytorch.out_proj.bias is not None and attn_fused.bias_out is not None:
                 attn_fused.bias_out.copy_(attn_pytorch.out_proj.bias)
 
