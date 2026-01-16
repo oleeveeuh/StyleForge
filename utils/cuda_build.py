@@ -476,6 +476,7 @@ def compile_inline(
     start_time = time.time()
     module = None
     compilation_error = None
+    actual_so_path = None  # Initialize for use in later steps
 
     try:
         # Try with with_pybind11 (newer PyTorch)
@@ -572,9 +573,10 @@ def compile_inline(
     # ========================================================================
     # STEP 6: VERIFY OUTPUT FILES
     # ========================================================================
-    if verbose:
-        actual_so_path = find_so_file(name)
+    # Find the actual .so file location (needed for symlink step)
+    actual_so_path = find_so_file(name)
 
+    if verbose:
         if actual_so_path and actual_so_path.exists():
             file_size = actual_so_path.stat().st_size
             if use_colors:
