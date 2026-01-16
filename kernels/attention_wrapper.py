@@ -66,6 +66,7 @@ class FusedAttentionFunction(torch.autograd.Function):
         w_qkv: torch.Tensor,
         w_out: torch.Tensor,
         bias_qkv: Optional[torch.Tensor],
+        bias_out: Optional[torch.Tensor],
         num_heads: int,
         scale: float
     ) -> torch.Tensor:
@@ -77,6 +78,7 @@ class FusedAttentionFunction(torch.autograd.Function):
             w_qkv: Fused QKV weight [3 * embed_dim, embed_dim]
             w_out: Output projection weight [embed_dim, embed_dim]
             bias_qkv: Optional QKV bias [3 * embed_dim]
+            bias_out: Optional output projection bias [embed_dim]
             num_heads: Number of attention heads
             scale: Scaling factor for attention scores
 
@@ -86,7 +88,7 @@ class FusedAttentionFunction(torch.autograd.Function):
         module = get_attention_module()
 
         # Save for backward
-        ctx.save_for_backward(x, w_qkv, w_out, bias_qkv)
+        ctx.save_for_backward(x, w_qkv, w_out, bias_qkv, bias_out)
         ctx.num_heads = num_heads
         ctx.scale = scale
 
@@ -97,6 +99,7 @@ class FusedAttentionFunction(torch.autograd.Function):
                 w_qkv.contiguous(),
                 w_out.contiguous(),
                 bias_qkv,
+                bias_out,
                 scale
             )
 
@@ -109,7 +112,7 @@ class FusedAttentionFunction(torch.autograd.Function):
 
         In production, we'd implement a custom backward kernel.
         """
-        x, w_qkv, w_out, bias_qkv = ctx.saved_tensors
+        x, w_qkv, w_out, bias_qkv, bias_out = ctx.saved_tensors
         num_heads = ctx.num_heads
         scale = ctx.scale
 
@@ -119,7 +122,7 @@ class FusedAttentionFunction(torch.autograd.Function):
 
         # TODO: Implement custom backward kernel
         # For now, return None for all gradients (no backward support in V1)
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
 
 class FusedAttention(nn.Module):
@@ -134,7 +137,7 @@ class FusedAttention(nn.Module):
         embed_dim: Total embedding dimension
         num_heads: Number of attention heads
         dropout: Dropout probability (not implemented in V1)
-        bias: Use bias in projections
+        bias: Use bias in projections (includes QKV bias and output bias)
 
     Example:
         >>> attn = FusedAttention(embed_dim=128, num_heads=4).cuda()
@@ -165,6 +168,7 @@ class FusedAttention(nn.Module):
 
         # Output projection
         self.w_out = nn.Parameter(torch.empty(embed_dim, embed_dim))
+        self.bias_out = nn.Parameter(torch.empty(embed_dim)) if bias else None
 
         # Initialize parameters
         self._reset_parameters()
@@ -176,6 +180,8 @@ class FusedAttention(nn.Module):
 
         if self.bias_qkv is not None:
             nn.init.zeros_(self.bias_qkv)
+        if self.bias_out is not None:
+            nn.init.zeros_(self.bias_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -193,6 +199,7 @@ class FusedAttention(nn.Module):
             self.w_qkv,
             self.w_out,
             self.bias_qkv,
+            self.bias_out,
             self.num_heads,
             self.scale
         )
@@ -276,6 +283,9 @@ def test_fused_attention():
                                            attn_torch.in_proj_weight[embed_dim:2*embed_dim],
                                            attn_torch.in_proj_weight[2*embed_dim:]], dim=0))
         attn_fused.w_out.copy_(attn_torch.out_proj.weight)
+        # Copy output bias if present
+        if attn_torch.out_proj.bias is not None and attn_fused.bias_out is not None:
+            attn_fused.bias_out.copy_(attn_torch.out_proj.bias)
 
     with torch.no_grad():
         out_fused = attn_fused(x)

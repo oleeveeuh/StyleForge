@@ -7,12 +7,24 @@ into a single kernel launch to minimize memory transfers.
 FIXED in this version:
 - Proper multi-head attention processing (all heads, not just head 0)
 - Correct QKV weight matrix layout handling
-- Output projection with w_out
+- Output projection: concatenate heads THEN apply w_out (not per-head)
 - Dynamic shared memory for arbitrary sequence lengths
 - Proper grid/block configuration
 - NO RACE CONDITIONS: deterministic output using proper parallel reduction
+- Support for output bias (bias_out)
 
 Performance Target: 8x speedup over PyTorch nn.MultiheadAttention
+
+OUTPUT PROJECTION ARCHITECTURE:
+------------------------------
+The multi-head attention output is computed as:
+1. Each head computes: head_out = softmax(Q @ K^T) @ V
+2. Heads are concatenated: concat = [h0, h1, ..., hN-1]  // shape: [batch, seq, embed_dim]
+3. Output projection: final = concat @ w_out^T + bias_out
+
+Step 2 uses a separate kernel launch to avoid race conditions. The first kernel
+computes per-head attention outputs and stores them in a temporary buffer.
+The second kernel concatenates heads and applies the output projection.
 */
 
 #include <torch/extension.h>
@@ -73,11 +85,11 @@ __device__ __forceinline__ void warp_reduce_sum_array(float* vals) {
 }
 
 // -------------------------------------------------------------------------
-// Fixed Fused Multi-Head Attention Kernel with Proper Reduction
+// KERNEL 1: Per-Head Attention Computation
 // -------------------------------------------------------------------------
 /*
- * Complete attention computation with proper multi-head support:
- * Input projection -> QKV split per head -> Attention scores -> Softmax -> Output projection
+ * Computes attention for each head independently and stores results in
+ * a temporary buffer for subsequent concatenation and projection.
  *
  * Grid configuration:
  *   blockIdx.x: batch index
@@ -90,14 +102,16 @@ __device__ __forceinline__ void warp_reduce_sum_array(float* vals) {
  *   - s_exp_scores[seq_len]: exp(scores - max) for softmax
  *   - s_V_accum[seq_len * HEAD_DIM]: accumulated weighted V values
  *   Total size: (2 + HEAD_DIM) * seq_len * sizeof(float)
+ *
+ * Output:
+ *   head_outputs: [batch, num_heads, seq_len, head_dim] - temporary buffer
  */
 template<int HEAD_DIM, int NUM_HEADS>
-__global__ void fused_attention_kernel_v1_fixed(
+__global__ void attention_per_head_kernel(
     const float* __restrict__ x,         // [batch, seq_len, embed_dim]
     const float* __restrict__ w_qkv,     // [3 * embed_dim, embed_dim]
-    const float* __restrict__ w_out,     // [embed_dim, embed_dim]
-    const float* __restrict__ bias_qkv,  // [3 * embed_dim]
-    float* __restrict__ out,             // [batch, seq_len, embed_dim]
+    const float* __restrict__ bias_qkv,  // [3 * embed_dim] or nullptr
+    float* __restrict__ head_outputs,    // [batch, num_heads, seq_len, head_dim]
     int batch_size,
     int seq_len,
     int embed_dim,
@@ -388,9 +402,11 @@ __global__ void fused_attention_kernel_v1_fixed(
     __syncthreads();
 
     // -------------------------------------------------------------------------
-    // Step 7: Output projection and write (only thread 0 writes)
+    // Step 7: Write head output to temporary buffer (only thread 0 writes)
     // -------------------------------------------------------------------------
-    // Only thread 0 handles the output projection to avoid races
+    // Write this head's output to the temporary buffer
+    // Output layout: [batch, num_heads, seq_len, head_dim]
+    // Offset = batch * num_heads * seq_len * head_dim + head * seq_len * head_dim + q_pos * head_dim
     if (k_pos == 0) {
         // Read the final reduced head output from shared memory
         float head_out[HEAD_DIM];
@@ -401,25 +417,81 @@ __global__ void fused_attention_kernel_v1_fixed(
             }
         }
 
-        // Apply output projection: output = head_output @ w_out^T
-        // Then accumulate into global output using atomicAdd (across heads only)
-        int64_t out_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
-
-        for (int d = 0; d < embed_dim; d++) {
-            float projected_val = 0.0f;
-
-            // w_out is [embed_dim, embed_dim], row d has w_out[d, :]
-            // We need columns [head_idx*head_dim : (head_idx+1)*head_dim]
-            int64_t w_out_offset = (int64_t)d * embed_dim + head_idx * head_dim;
-
-            for (int i = 0; i < HEAD_DIM; i++) {
-                projected_val += head_out[i] * w_out[w_out_offset + i];
-            }
-
-            // Atomic add: multiple heads contribute to the same output location
-            // This is the ONLY place atomicAdd is used, and it's for multi-head concatenation
-            atomicAdd(&out[out_offset + d], projected_val);
+        // Write to temporary buffer
+        int64_t head_out_offset = ((int64_t)batch_idx * NUM_HEADS + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
+        for (int i = 0; i < HEAD_DIM; i++) {
+            head_outputs[head_out_offset + i] = head_out[i];
         }
+    }
+}
+
+// -------------------------------------------------------------------------
+// KERNEL 2: Output Projection - Concatenate Heads and Apply w_out
+// -------------------------------------------------------------------------
+/*
+ * Second pass: concatenate head outputs and apply output projection.
+ *
+ * Each (batch, seq, embed_dim) output is computed as:
+ *   output[batch, seq, :] = concat(heads) @ w_out^T + bias_out
+ *
+ * Grid configuration:
+ *   blockIdx.x: batch index
+ *   blockIdx.y: sequence position
+ *   blockIdx.z: output dimension (embed_dim)
+ *   threadIdx.x: head index (for accumulation)
+ *
+ * This kernel is launched after attention_per_head_kernel completes.
+ */
+template<int HEAD_DIM, int NUM_HEADS>
+__global__ void output_projection_kernel(
+    const float* __restrict__ head_outputs,  // [batch, num_heads, seq_len, head_dim]
+    const float* __restrict__ w_out,         // [embed_dim, embed_dim]
+    const float* __restrict__ bias_out,      // [embed_dim] or nullptr
+    float* __restrict__ out,                 // [batch, seq_len, embed_dim]
+    int batch_size,
+    int seq_len,
+    int embed_dim
+) {
+    // Grid layout
+    int batch_idx = blockIdx.x;
+    int seq_idx = blockIdx.y;
+    int out_dim = blockIdx.z;
+    int head_idx = threadIdx.x;
+
+    // Boundary checks
+    if (batch_idx >= batch_size || seq_idx >= seq_len || out_dim >= embed_dim)
+        return;
+    if (head_idx >= NUM_HEADS)
+        return;
+
+    // Each thread computes partial sum for one output dimension from one head
+    // head_outputs layout: [batch, num_heads, seq_len, head_dim]
+    int64_t head_offset = ((int64_t)batch_idx * NUM_HEADS + head_idx) * seq_len * HEAD_DIM + seq_idx * HEAD_DIM;
+    const float* head_ptr = head_outputs + head_offset;
+
+    // w_out layout: [embed_dim, embed_dim], row out_dim has w_out[out_dim, :]
+    int64_t w_out_offset = (int64_t)out_dim * embed_dim + head_idx * HEAD_DIM;
+    const float* w_out_ptr = w_out + w_out_offset;
+
+    // Compute partial dot product: head_out[:head_dim] @ w_out[out_dim, head_idx*head_dim : (head_idx+1)*head_dim]
+    float partial_sum = 0.0f;
+    #pragma unroll
+    for (int i = 0; i < HEAD_DIM; i++) {
+        partial_sum += head_ptr[i] * w_out_ptr[i];
+    }
+
+    // Warp-level reduction to sum contributions from all heads
+    partial_sum = warp_reduce_sum(partial_sum);
+
+    // Lane 0 writes the result (plus bias if provided)
+    int lane_id = head_idx % WARP_SIZE;
+    if (lane_id == 0) {
+        int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
+        float result = partial_sum;
+        if (bias_out != nullptr) {
+            result += bias_out[out_dim];
+        }
+        out[out_offset] = result;
     }
 }
 
@@ -500,6 +572,7 @@ torch::Tensor fused_attention_v1(
     torch::Tensor w_qkv,
     torch::Tensor w_out,
     torch::optional<torch::Tensor> bias_qkv,
+    torch::optional<torch::Tensor> bias_out,
     float scale
 ) {
     TORCH_CHECK(x.device().is_cuda(), "Input x must be on CUDA");
@@ -510,14 +583,22 @@ torch::Tensor fused_attention_v1(
     int embed_dim = x.size(2);
 
     auto out = torch::zeros_like(x);
-    out.zero_();
 
     // Determine number of heads based on embed_dim
     int num_heads = 4;
     int head_dim = embed_dim / num_heads;
 
-    // Thread block configuration
-    // Use seq_len threads per block (one per key position)
+    // Allocate temporary buffer for head outputs: [batch, num_heads, seq_len, head_dim]
+    auto head_outputs = torch::zeros({batch_size, num_heads, seq_len, head_dim}, x.options());
+
+    // Get bias pointers
+    const float* bias_qkv_ptr = bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr;
+    const float* bias_out_ptr = bias_out.has_value() ? bias_out.value().data_ptr<float>() : nullptr;
+
+    // =========================================================================
+    // KERNEL 1: Compute per-head attention outputs
+    // =========================================================================
+    // Thread block configuration for attention kernel
     int threads_per_block = seq_len;
 
     // Cap threads per block at 1024 (CUDA limit)
@@ -528,45 +609,42 @@ torch::Tensor fused_attention_v1(
     threads_per_block = ((threads_per_block + 31) / 32) * 32;
 
     // Grid: batch_size x num_heads x seq_len
-    dim3 blocks(batch_size, num_heads, seq_len);
-    dim3 threads(threads_per_block);
+    dim3 blocks1(batch_size, num_heads, seq_len);
+    dim3 threads1(threads_per_block);
 
-    // DYNAMIC SHARED MEMORY SIZE
+    // DYNAMIC SHARED MEMORY SIZE for kernel 1
     // 2 * seq_len floats (scores + exp_scores) + seq_len * HEAD_DIM (V accumulation)
     size_t shared_mem_size = (2 + head_dim) * seq_len * sizeof(float);
 
-    // Launch kernel with dynamic shared memory
+    // Launch kernel 1: compute per-head attention
     if (head_dim == 32) {
-        fused_attention_kernel_v1_fixed<32, 4><<<blocks, threads, shared_mem_size>>>(
+        attention_per_head_kernel<32, 4><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
-            w_out.data_ptr<float>(),
-            bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr,
-            out.data_ptr<float>(),
+            bias_qkv_ptr,
+            head_outputs.data_ptr<float>(),
             batch_size,
             seq_len,
             embed_dim,
             scale
         );
     } else if (head_dim == 64) {
-        fused_attention_kernel_v1_fixed<64, 4><<<blocks, threads, shared_mem_size>>>(
+        attention_per_head_kernel<64, 4><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
-            w_out.data_ptr<float>(),
-            bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr,
-            out.data_ptr<float>(),
+            bias_qkv_ptr,
+            head_outputs.data_ptr<float>(),
             batch_size,
             seq_len,
             embed_dim,
             scale
         );
     } else if (head_dim == 128) {
-        fused_attention_kernel_v1_fixed<128, 4><<<blocks, threads, shared_mem_size>>>(
+        attention_per_head_kernel<128, 4><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
-            w_out.data_ptr<float>(),
-            bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr,
-            out.data_ptr<float>(),
+            bias_qkv_ptr,
+            head_outputs.data_ptr<float>(),
             batch_size,
             seq_len,
             embed_dim,
@@ -574,16 +652,66 @@ torch::Tensor fused_attention_v1(
         );
     } else {
         // Fallback for other head dimensions
-        fused_attention_kernel_v1_fixed<32, 4><<<blocks, threads, shared_mem_size>>>(
+        attention_per_head_kernel<32, 4><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
-            w_out.data_ptr<float>(),
-            bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr,
-            out.data_ptr<float>(),
+            bias_qkv_ptr,
+            head_outputs.data_ptr<float>(),
             batch_size,
             seq_len,
             embed_dim,
             scale
+        );
+    }
+
+    // =========================================================================
+    // KERNEL 2: Concatenate heads and apply output projection
+    // =========================================================================
+    // Grid: batch_size x seq_len x embed_dim
+    // Threads: num_heads (each thread handles one head's contribution)
+    dim3 blocks2(batch_size, seq_len, embed_dim);
+    dim3 threads2(num_heads);
+
+    // Launch kernel 2: output projection
+    if (head_dim == 32) {
+        output_projection_kernel<32, 4><<<blocks2, threads2>>>(
+            head_outputs.data_ptr<float>(),
+            w_out.data_ptr<float>(),
+            bias_out_ptr,
+            out.data_ptr<float>(),
+            batch_size,
+            seq_len,
+            embed_dim
+        );
+    } else if (head_dim == 64) {
+        output_projection_kernel<64, 4><<<blocks2, threads2>>>(
+            head_outputs.data_ptr<float>(),
+            w_out.data_ptr<float>(),
+            bias_out_ptr,
+            out.data_ptr<float>(),
+            batch_size,
+            seq_len,
+            embed_dim
+        );
+    } else if (head_dim == 128) {
+        output_projection_kernel<128, 4><<<blocks2, threads2>>>(
+            head_outputs.data_ptr<float>(),
+            w_out.data_ptr<float>(),
+            bias_out_ptr,
+            out.data_ptr<float>(),
+            batch_size,
+            seq_len,
+            embed_dim
+        );
+    } else {
+        output_projection_kernel<32, 4><<<blocks2, threads2>>>(
+            head_outputs.data_ptr<float>(),
+            w_out.data_ptr<float>(),
+            bias_out_ptr,
+            out.data_ptr<float>(),
+            batch_size,
+            seq_len,
+            embed_dim
         );
     }
 
