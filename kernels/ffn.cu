@@ -19,11 +19,22 @@ Performance Target: 4-5x speedup over PyTorch sequential implementation
 #include <math.h>
 
 // ============================================
+// CUDA Error Checking
+// ============================================
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            printf("CUDA error at %s:%d: %s\n", __FILE__, __LINE__, \
+                   cudaGetErrorString(err)); \
+            std::abort(); \
+        } \
+    } while (0)
+
+// ============================================
 // Configuration
 // ============================================
 #define TILE_SIZE 16
-#define EMBED_DIM 128
-#define FFN_DIM 512
 #define WARP_SIZE 32
 
 // ============================================
@@ -256,50 +267,89 @@ torch::Tensor fused_ffn_forward(
 
     int smem_size = sizeof(float) * (embed_dim + ffn_dim);
 
-    if (use_vectorized && embed_dim % 4 == 0 && ffn_dim % 4 == 0) {
-        // Use vectorized kernel
-        if (embed_dim == 128 && ffn_dim == 512) {
+    // Launch appropriate kernel based on dimensions
+    // Since template parameters must be compile-time constants,
+    // we use a series of if-else checks
+
+    if (embed_dim == 128 && ffn_dim == 512) {
+        if (use_vectorized) {
             fused_ffn_kernel_v2<128, 512><<<grid, block, smem_size>>>(
-                input.data_ptr<float>(),
-                fc1_weight.data_ptr<float>(),
-                fc1_bias.data_ptr<float>(),
-                fc2_weight.data_ptr<float>(),
-                fc2_bias.data_ptr<float>(),
-                output.data_ptr<float>(),
-                batch_size,
-                seq_len,
-                embed_dim,
-                ffn_dim
-            );
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
         } else {
-            // Fallback to V1
             fused_ffn_kernel_v1<128, 512><<<grid, block, smem_size>>>(
-                input.data_ptr<float>(),
-                fc1_weight.data_ptr<float>(),
-                fc1_bias.data_ptr<float>(),
-                fc2_weight.data_ptr<float>(),
-                fc2_bias.data_ptr<float>(),
-                output.data_ptr<float>(),
-                batch_size,
-                seq_len,
-                embed_dim,
-                ffn_dim
-            );
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        }
+    } else if (embed_dim == 256 && ffn_dim == 1024) {
+        if (use_vectorized) {
+            fused_ffn_kernel_v2<256, 1024><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        } else {
+            fused_ffn_kernel_v1<256, 1024><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        }
+    } else if (embed_dim == 512 && ffn_dim == 2048) {
+        if (use_vectorized) {
+            fused_ffn_kernel_v2<512, 2048><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        } else {
+            fused_ffn_kernel_v1<512, 2048><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        }
+    } else if (embed_dim == 768 && ffn_dim == 3072) {
+        if (use_vectorized) {
+            fused_ffn_kernel_v2<768, 3072><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        } else {
+            fused_ffn_kernel_v1<768, 3072><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        }
+    } else if (embed_dim == 1024 && ffn_dim == 4096) {
+        if (use_vectorized) {
+            fused_ffn_kernel_v2<1024, 4096><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
+        } else {
+            fused_ffn_kernel_v1<1024, 4096><<<grid, block, smem_size>>>(
+                input.data_ptr<float>(), fc1_weight.data_ptr<float>(),
+                fc1_bias.data_ptr<float>(), fc2_weight.data_ptr<float>(),
+                fc2_bias.data_ptr<float>(), output.data_ptr<float>(),
+                batch_size, seq_len, embed_dim, ffn_dim);
         }
     } else {
-        // Use standard kernel
-        fused_ffn_kernel_v1<128, 512><<<grid, block, smem_size>>>(
-            input.data_ptr<float>(),
-            fc1_weight.data_ptr<float>(),
-            fc1_bias.data_ptr<float>(),
-            fc2_weight.data_ptr<float>(),
-            fc2_bias.data_ptr<float>(),
-            output.data_ptr<float>(),
-            batch_size,
-            seq_len,
-            embed_dim,
-            ffn_dim
-        );
+        // Generic fallback - use PyTorch for unsupported dimensions
+        // For now, return the output as-is (no-op)
+        // In production, we'd want to either:
+        // 1. Add more template specializations, or
+        // 2. Fall back to a non-templated kernel
+        TORCH_CHECK(false,
+            "Unsupported FFN dimensions: embed_dim=", embed_dim,
+            ", ffn_dim=", ffn_dim, ". Supported: (128,512), (256,1024), (512,2048), (768,3072), (1024,4096)");
     }
 
     CUDA_CHECK(cudaGetLastError());
