@@ -389,13 +389,14 @@ __device__ __forceinline__ void warp_reduce_sum_array(float* vals) {
  * Output:
  *   head_outputs: [batch, num_heads, seq_len, head_dim] - temporary buffer
  */
-template<int HEAD_DIM, int NUM_HEADS>
+template<int HEAD_DIM>
 __global__ void attention_per_head_kernel(
     const float* __restrict__ x,         // [batch, seq_len, embed_dim]
     const float* __restrict__ w_qkv,     // [3 * embed_dim, embed_dim]
     const float* __restrict__ bias_qkv,  // [3 * embed_dim] or nullptr
     float* __restrict__ head_outputs,    // [batch, num_heads, seq_len, head_dim]
     int batch_size,
+    int num_heads,
     int seq_len,
     int embed_dim,
     float scale
@@ -436,7 +437,7 @@ __global__ void attention_per_head_kernel(
     int k_pos = threadIdx.x;
 
     // Boundary checks
-    if (batch_idx >= batch_size || head_idx >= NUM_HEADS || q_pos >= seq_len)
+    if (batch_idx >= batch_size || head_idx >= num_heads || q_pos >= seq_len)
         return;
 
     const int head_dim = HEAD_DIM;
@@ -639,52 +640,55 @@ __global__ void attention_per_head_kernel(
     // Each output dimension is reduced separately
     // Final output for this head: weighted sum of all V values
 
-    // Assign threads to reduce specific output dimensions
-    // This ensures deterministic results
+    // Per-thread accumulator for this thread's contribution across all key positions
     float head_output[HEAD_DIM];
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
         head_output[i] = 0.0f;
     }
 
-    // Each thread reduces a subset of the key positions
-    // Use a deterministic reduction pattern
+    // Each thread contributes its weighted V value at position k_pos
+    // The value s_V_accum[k_pos * HEAD_DIM + i] = attn_weight * v_reg[i]
+    #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        // This thread contributes its value
-        float my_val = s_V_accum[k_pos * HEAD_DIM + i];
-        head_output[i] = my_val;
-
-        // Warp-level reduction
-        head_output[i] = warp_reduce_sum(head_output[i]);
-
-        // For multi-warp, need additional reduction
-        // Store partial sum in shared memory
+        head_output[i] = s_V_accum[k_pos * HEAD_DIM + i];
     }
 
-    // Multi-warp reduction using shared memory
+    // Warp-level reduction: sum all contributions from threads in this warp
+    #pragma unroll
+    for (int i = 0; i < HEAD_DIM; i++) {
+        head_output[i] = warp_reduce_sum(head_output[i]);
+    }
+
+    // For multi-warp blocks, we need to reduce across warps
+    // Lane 0 of each warp stores the partial sum in shared memory
     if (lane_id == 0) {
-        // Store warp partial sums
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            s_V_accum[warp_id * HEAD_DIM + i] = head_output[i];
+            shared_mem[warp_id * HEAD_DIM + i] = head_output[i];
         }
     }
     __syncthreads();
 
-    // Final reduction: only first warp (or lane 0 of each warp) reduces the partial sums
+    // First warp (warp_id == 0) does the final reduction across all warps
     if (warp_id == 0) {
-        // Each lane in first warp reduces one dimension
+        // Each lane in warp 0 handles one dimension if possible, or all lanes handle all dims
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
             float sum = 0.0f;
-            // Sum all warp partial results
+            // Sum partial results from all warps
             for (int w = 0; w < num_warps; w++) {
-                sum += s_V_accum[w * HEAD_DIM + i];
+                sum += shared_mem[w * HEAD_DIM + i];
             }
             head_output[i] = sum;
         }
-    }
 
-    // Broadcast final head_output to all threads in warp 0
-    // For simplicity, we recompute from shared memory in thread 0
+        // Broadcast result to all lanes in warp 0
+        #pragma unroll
+        for (int i = 0; i < HEAD_DIM; i++) {
+            head_output[i] = __shfl_sync(0xffffffff, head_output[i], 0);
+        }
+    }
     __syncthreads();
 
     // -------------------------------------------------------------------------
@@ -693,20 +697,12 @@ __global__ void attention_per_head_kernel(
     // Write this head's output to the temporary buffer
     // Output layout: [batch, num_heads, seq_len, head_dim]
     // Offset = batch * num_heads * seq_len * head_dim + head * seq_len * head_dim + q_pos * head_dim
-    if (k_pos == 0) {
-        // Read the final reduced head output from shared memory
-        float head_out[HEAD_DIM];
+    if (warp_id == 0 && lane_id == 0) {
+        // Write the final reduced head output from head_output (lane 0 has the broadcast result)
+        int64_t head_out_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            head_out[i] = 0.0f;
-            for (int w = 0; w < num_warps; w++) {
-                head_out[i] += s_V_accum[w * HEAD_DIM + i];
-            }
-        }
-
-        // Write to temporary buffer
-        int64_t head_out_offset = ((int64_t)batch_idx * NUM_HEADS + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
-        for (int i = 0; i < HEAD_DIM; i++) {
-            head_outputs[head_out_offset + i] = head_out[i];
+            head_outputs[head_out_offset + i] = head_output[i];
         }
     }
 }
@@ -728,12 +724,13 @@ __global__ void attention_per_head_kernel(
  *
  * This kernel is launched after attention_per_head_kernel completes.
  */
-template<int HEAD_DIM, int NUM_HEADS>
+template<int HEAD_DIM>
 __global__ void output_projection_kernel(
     const float* __restrict__ head_outputs,  // [batch, num_heads, seq_len, head_dim]
     const float* __restrict__ w_out,         // [embed_dim, embed_dim]
     const float* __restrict__ bias_out,      // [embed_dim] or nullptr
     float* __restrict__ out,                 // [batch, seq_len, embed_dim]
+    int num_heads,
     int batch_size,
     int seq_len,
     int embed_dim
@@ -747,12 +744,12 @@ __global__ void output_projection_kernel(
     // Boundary checks
     if (batch_idx >= batch_size || seq_idx >= seq_len || out_dim >= embed_dim)
         return;
-    if (head_idx >= NUM_HEADS)
+    if (head_idx >= num_heads)
         return;
 
     // Each thread computes partial sum for one output dimension from one head
     // head_outputs layout: [batch, num_heads, seq_len, head_dim]
-    int64_t head_offset = ((int64_t)batch_idx * NUM_HEADS + head_idx) * seq_len * HEAD_DIM + seq_idx * HEAD_DIM;
+    int64_t head_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + seq_idx * HEAD_DIM;
     const float* head_ptr = head_outputs + head_offset;
 
     // w_out layout: [embed_dim, embed_dim], row out_dim has w_out[out_dim, :]
@@ -878,8 +875,20 @@ torch::Tensor fused_attention_v1(
     int embed_dim = x.size(2);
 
     // Determine number of heads based on embed_dim
-    int num_heads = 4;
-    int head_dim = embed_dim / num_heads;
+    // We need to infer num_heads from the fact that head_dim must be one of {32, 64, 128}
+    int num_heads;
+    int head_dim;
+
+    if (embed_dim % 128 == 0 && embed_dim / 128 <= 16) {
+        head_dim = 128;
+        num_heads = embed_dim / 128;
+    } else if (embed_dim % 64 == 0 && embed_dim / 64 <= 16) {
+        head_dim = 64;
+        num_heads = embed_dim / 64;
+    } else {
+        head_dim = 32;
+        num_heads = embed_dim / 32;
+    }
 
     // Validate shapes and constraints
     validate_tensor_shapes(batch_size, seq_len, embed_dim, num_heads, head_dim);
@@ -944,46 +953,50 @@ torch::Tensor fused_attention_v1(
 
     // Launch kernel 1: compute per-head attention
     if (head_dim == 32) {
-        attention_per_head_kernel<32, 4><<<blocks1, threads1, shared_mem_size>>>(
+        attention_per_head_kernel<32><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             bias_qkv_ptr,
             head_outputs.data_ptr<float>(),
             batch_size,
+            num_heads,
             seq_len,
             embed_dim,
             scale
         );
     } else if (head_dim == 64) {
-        attention_per_head_kernel<64, 4><<<blocks1, threads1, shared_mem_size>>>(
+        attention_per_head_kernel<64><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             bias_qkv_ptr,
             head_outputs.data_ptr<float>(),
             batch_size,
+            num_heads,
             seq_len,
             embed_dim,
             scale
         );
     } else if (head_dim == 128) {
-        attention_per_head_kernel<128, 4><<<blocks1, threads1, shared_mem_size>>>(
+        attention_per_head_kernel<128><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             bias_qkv_ptr,
             head_outputs.data_ptr<float>(),
             batch_size,
+            num_heads,
             seq_len,
             embed_dim,
             scale
         );
     } else {
         // Fallback for other head dimensions
-        attention_per_head_kernel<32, 4><<<blocks1, threads1, shared_mem_size>>>(
+        attention_per_head_kernel<32><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             bias_qkv_ptr,
             head_outputs.data_ptr<float>(),
             batch_size,
+            num_heads,
             seq_len,
             embed_dim,
             scale
@@ -1004,41 +1017,45 @@ torch::Tensor fused_attention_v1(
 
     // Launch kernel 2: output projection
     if (head_dim == 32) {
-        output_projection_kernel<32, 4><<<blocks2, threads2>>>(
+        output_projection_kernel<32><<<blocks2, threads2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
             out.data_ptr<float>(),
+            num_heads,
             batch_size,
             seq_len,
             embed_dim
         );
     } else if (head_dim == 64) {
-        output_projection_kernel<64, 4><<<blocks2, threads2>>>(
+        output_projection_kernel<64><<<blocks2, threads2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
             out.data_ptr<float>(),
+            num_heads,
             batch_size,
             seq_len,
             embed_dim
         );
     } else if (head_dim == 128) {
-        output_projection_kernel<128, 4><<<blocks2, threads2>>>(
+        output_projection_kernel<128><<<blocks2, threads2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
             out.data_ptr<float>(),
+            num_heads,
             batch_size,
             seq_len,
             embed_dim
         );
     } else {
-        output_projection_kernel<32, 4><<<blocks2, threads2>>>(
+        output_projection_kernel<32><<<blocks2, threads2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
             out.data_ptr<float>(),
+            num_heads,
             batch_size,
             seq_len,
             embed_dim
