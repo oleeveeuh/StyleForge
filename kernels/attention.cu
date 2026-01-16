@@ -875,7 +875,7 @@ torch::Tensor fused_attention_v1(
     int embed_dim = x.size(2);
 
     // Determine number of heads based on embed_dim
-    // We need to infer num_heads from the fact that head_dim must be one of {32, 64, 128}
+    // Support common head dimensions: 128, 64, 32, 16, 8
     int num_heads;
     int head_dim;
 
@@ -885,9 +885,28 @@ torch::Tensor fused_attention_v1(
     } else if (embed_dim % 64 == 0 && embed_dim / 64 <= 16) {
         head_dim = 64;
         num_heads = embed_dim / 64;
-    } else {
+    } else if (embed_dim % 32 == 0 && embed_dim / 32 <= 16) {
         head_dim = 32;
         num_heads = embed_dim / 32;
+    } else if (embed_dim % 16 == 0 && embed_dim / 16 <= 16) {
+        head_dim = 16;
+        num_heads = embed_dim / 16;
+    } else if (embed_dim % 8 == 0 && embed_dim / 8 <= 16) {
+        head_dim = 8;
+        num_heads = embed_dim / 8;
+    } else {
+        // Default: try to infer from user intent
+        // Common case: num_heads is embed_dim / 64 or / 32
+        head_dim = 64;
+        num_heads = embed_dim / 64;
+        if (num_heads == 0 || embed_dim % 64 != 0) {
+            head_dim = 32;
+            num_heads = embed_dim / 32;
+        }
+        if (num_heads == 0 || embed_dim % 32 != 0) {
+            head_dim = embed_dim;
+            num_heads = 1;
+        }
     }
 
     // Validate shapes and constraints
@@ -952,7 +971,31 @@ torch::Tensor fused_attention_v1(
     size_t shared_mem_size = ((2 + head_dim) * seq_len + padding) * sizeof(float);
 
     // Launch kernel 1: compute per-head attention
-    if (head_dim == 32) {
+    if (head_dim == 8) {
+        attention_per_head_kernel<8><<<blocks1, threads1, shared_mem_size>>>(
+            x.data_ptr<float>(),
+            w_qkv.data_ptr<float>(),
+            bias_qkv_ptr,
+            head_outputs.data_ptr<float>(),
+            batch_size,
+            num_heads,
+            seq_len,
+            embed_dim,
+            scale
+        );
+    } else if (head_dim == 16) {
+        attention_per_head_kernel<16><<<blocks1, threads1, shared_mem_size>>>(
+            x.data_ptr<float>(),
+            w_qkv.data_ptr<float>(),
+            bias_qkv_ptr,
+            head_outputs.data_ptr<float>(),
+            batch_size,
+            num_heads,
+            seq_len,
+            embed_dim,
+            scale
+        );
+    } else if (head_dim == 32) {
         attention_per_head_kernel<32><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
@@ -989,7 +1032,7 @@ torch::Tensor fused_attention_v1(
             scale
         );
     } else {
-        // Fallback for other head dimensions
+        // Fallback for other head dimensions - use 32 as default
         attention_per_head_kernel<32><<<blocks1, threads1, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
@@ -1016,7 +1059,29 @@ torch::Tensor fused_attention_v1(
     validate_grid_dimensions(blocks2, threads2);
 
     // Launch kernel 2: output projection
-    if (head_dim == 32) {
+    if (head_dim == 8) {
+        output_projection_kernel<8><<<blocks2, threads2>>>(
+            head_outputs.data_ptr<float>(),
+            w_out.data_ptr<float>(),
+            bias_out_ptr,
+            out.data_ptr<float>(),
+            num_heads,
+            batch_size,
+            seq_len,
+            embed_dim
+        );
+    } else if (head_dim == 16) {
+        output_projection_kernel<16><<<blocks2, threads2>>>(
+            head_outputs.data_ptr<float>(),
+            w_out.data_ptr<float>(),
+            bias_out_ptr,
+            out.data_ptr<float>(),
+            num_heads,
+            batch_size,
+            seq_len,
+            embed_dim
+        );
+    } else if (head_dim == 32) {
         output_projection_kernel<32><<<blocks2, threads2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
@@ -1050,6 +1115,7 @@ torch::Tensor fused_attention_v1(
             embed_dim
         );
     } else {
+        // Fallback for other head dimensions
         output_projection_kernel<32><<<blocks2, threads2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
