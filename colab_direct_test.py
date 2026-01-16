@@ -42,8 +42,8 @@ if "int64_t num_heads" not in cuda_source:
 else:
     print("✓ Verified: num_heads parameter is present in source")
 
-# CUDA file already contains PYBIND11_MODULE, so pass empty cpp_source
-cpp_source = ""
+# CUDA file already contains PYBIND11_MODULE, so pass empty list for cpp_sources
+cpp_sources = []
 
 print("\n" + "-" * 70)
 print("Compiling kernel (this may take 30-60 seconds)...")
@@ -58,7 +58,7 @@ try:
 
     module = load_inline(
         name=unique_name,
-        cpp_sources=[cpp_source] if cpp_source else None,
+        cpp_sources=cpp_sources,
         cuda_sources=[cuda_source],
         extra_cuda_cflags=["-O3"],
         verbose=True  # Show compilation output

@@ -50,15 +50,15 @@ try:
     with open(cuda_src_path, 'r') as f:
         cuda_source = f.read()
 
-    # CUDA file already contains PYBIND11_MODULE, so pass empty cpp_source
-    cpp_source = ""
+    # CUDA file already contains PYBIND11_MODULE, so pass empty list for cpp_sources
+    cpp_sources = []
 
     print("\nCompiling kernel...")
     unique_name = f"test_fused_attention_{int(time.time())}"
 
     module = load_inline(
         name=unique_name,
-        cpp_sources=[cpp_source] if cpp_source else None,
+        cpp_sources=cpp_sources,
         cuda_sources=[cuda_source],
         extra_cuda_cflags=["-O3"],
         verbose=False
