@@ -130,7 +130,8 @@ class FusedFFN(nn.Module):
                 w1_t,
                 b1,
                 w2_t,
-                b2
+                b2,
+                False  # use_vectorized - set to False for stability
             )
 
         # Apply dropout if training
