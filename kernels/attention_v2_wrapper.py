@@ -12,7 +12,7 @@ import torch.nn as nn
 from pathlib import Path
 from typing import Optional
 
-from ..utils import compile_inline
+from utils import compile_inline
 
 # Global module cache
 _attention_v2_module = None

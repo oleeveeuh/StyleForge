@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from pathlib import Path
 from typing import Optional
 
-from ..utils import compile_inline
+from utils import compile_inline
 
 # Global module cache
 _ffn_module = None

@@ -10,7 +10,7 @@ import torch.nn as nn
 from pathlib import Path
 from typing import Optional
 
-from ..utils import compile_inline, get_cuda_info
+from utils import compile_inline, get_cuda_info
 
 
 # Global variable to hold compiled module
