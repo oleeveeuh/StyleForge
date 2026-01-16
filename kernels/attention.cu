@@ -763,18 +763,46 @@ __global__ void output_projection_kernel(
         partial_sum += head_ptr[i] * w_out_ptr[i];
     }
 
-    // Warp-level reduction to sum contributions from all heads
-    partial_sum = warp_reduce_sum(partial_sum);
-
     // Lane 0 writes the result (plus bias if provided)
     int lane_id = head_idx % WARP_SIZE;
-    if (lane_id == 0) {
-        int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
-        float result = partial_sum;
-        if (bias_out != nullptr) {
-            result += bias_out[out_dim];
+
+    // Warp-level reduction to sum contributions from all heads
+    // Only threads with head_idx < num_heads participate, so we need a valid mask
+    // For simplicity, use shared memory reduction when num_heads is not a full warp
+    if (num_heads == WARP_SIZE) {
+        // Fast path: all lanes in warp participate
+        partial_sum = warp_reduce_sum(partial_sum);
+        if (lane_id == 0) {
+            int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
+            float result = partial_sum;
+            if (bias_out != nullptr) {
+                result += bias_out[out_dim];
+            }
+            out[out_offset] = result;
         }
-        out[out_offset] = result;
+    } else {
+        // General case: use shared memory for reduction
+        // Each active thread stores its partial sum
+        if (head_idx < num_heads) {
+            extern __shared__ float s_reduce[];
+            s_reduce[head_idx] = partial_sum;
+        }
+        __syncthreads();
+
+        // First thread sums up all contributions
+        if (head_idx == 0) {
+            float total = 0.0f;
+            for (int h = 0; h < num_heads; h++) {
+                extern __shared__ float s_reduce[];
+                total += s_reduce[h];
+            }
+            int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
+            float result = total;
+            if (bias_out != nullptr) {
+                result += bias_out[out_dim];
+            }
+            out[out_offset] = result;
+        }
     }
 }
 
@@ -1033,9 +1061,12 @@ torch::Tensor fused_attention_v1(
     dim3 threads2(num_heads);
     validate_grid_dimensions(blocks2, threads2);
 
+    // Shared memory for output projection reduction: num_heads floats
+    size_t shared_mem_size_2 = num_heads * sizeof(float);
+
     // Launch kernel 2: output projection
     if (head_dim == 8) {
-        output_projection_kernel<8><<<blocks2, threads2>>>(
+        output_projection_kernel<8><<<blocks2, threads2, shared_mem_size_2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
@@ -1046,7 +1077,7 @@ torch::Tensor fused_attention_v1(
             embed_dim
         );
     } else if (head_dim == 16) {
-        output_projection_kernel<16><<<blocks2, threads2>>>(
+        output_projection_kernel<16><<<blocks2, threads2, shared_mem_size_2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
@@ -1057,7 +1088,7 @@ torch::Tensor fused_attention_v1(
             embed_dim
         );
     } else if (head_dim == 32) {
-        output_projection_kernel<32><<<blocks2, threads2>>>(
+        output_projection_kernel<32><<<blocks2, threads2, shared_mem_size_2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
@@ -1068,7 +1099,7 @@ torch::Tensor fused_attention_v1(
             embed_dim
         );
     } else if (head_dim == 64) {
-        output_projection_kernel<64><<<blocks2, threads2>>>(
+        output_projection_kernel<64><<<blocks2, threads2, shared_mem_size_2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
@@ -1079,7 +1110,7 @@ torch::Tensor fused_attention_v1(
             embed_dim
         );
     } else if (head_dim == 128) {
-        output_projection_kernel<128><<<blocks2, threads2>>>(
+        output_projection_kernel<128><<<blocks2, threads2, shared_mem_size_2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
@@ -1091,7 +1122,7 @@ torch::Tensor fused_attention_v1(
         );
     } else {
         // Fallback for other head dimensions
-        output_projection_kernel<32><<<blocks2, threads2>>>(
+        output_projection_kernel<32><<<blocks2, threads2, shared_mem_size_2>>>(
             head_outputs.data_ptr<float>(),
             w_out.data_ptr<float>(),
             bias_out_ptr,
