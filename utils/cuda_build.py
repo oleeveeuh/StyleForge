@@ -169,9 +169,10 @@ def compile_inline(
         'verbose': verbose,
     }
 
-    # Add functions parameter only if specified
-    if functions:
-        load_inline_kwargs['functions'] = functions
+    # Add functions parameter only if specified (not compatible with all PyTorch versions)
+    # We'll skip this for Colab compatibility
+    # if functions:
+    #     load_inline_kwargs['functions'] = functions
 
     # Compile the module - handle various PyTorch version differences
     try:
@@ -183,8 +184,8 @@ def compile_inline(
             kwargs = load_inline_kwargs.copy()
             kwargs.pop('with_pybind11', None)
             module = load_inline(**kwargs)
-    except (ImportError, OSError) as e:
-        # Colab-specific issue: compiled .so file cannot be loaded
+    except (ImportError, OSError, RuntimeError) as e:
+        # Colab-specific issue: compiled .so file cannot be loaded or compilation fails
         # This is a known PyTorch JIT limitation in some environments
         raise RuntimeError(
             f"CUDA JIT compilation encountered an error. "
