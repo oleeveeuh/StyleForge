@@ -6,7 +6,7 @@ into a single kernel launch to minimize memory transfers.
 
 FIXED in this version:
 - Proper multi-head attention processing (all heads, not just head 0)
-- Correct QKV weight matrix layout handling
+- Correct QKV weight matrix layout handling with proper head-specific indexing
 - Output projection: concatenate heads THEN apply w_out (not per-head)
 - Dynamic shared memory for arbitrary sequence lengths
 - Proper grid/block configuration
@@ -14,6 +14,22 @@ FIXED in this version:
 - Support for output bias (bias_out)
 
 Performance Target: 8x speedup over PyTorch nn.MultiheadAttention
+
+QKV WEIGHT MATRIX LAYOUT:
+-------------------------
+w_qkv shape: [3 * embed_dim, embed_dim]
+Layout: [Q_weights; K_weights; V_weights] (stacked vertically)
+
+Each weight section is [embed_dim, embed_dim] and divided among heads:
+- Q_weights for head h: rows [h * head_dim : (h+1) * head_dim]
+- K_weights for head h: rows [embed_dim + h * head_dim : embed_dim + (h+1) * head_dim]
+- V_weights for head h: rows [2*embed_dim + h * head_dim : 2*embed_dim + (h+1) * head_dim]
+
+bias_qkv shape: [3 * embed_dim]
+Layout: [Q_bias; K_bias; V_bias]
+- Q_bias for head h: [h * head_dim : (h+1) * head_dim]
+- K_bias for head h: [embed_dim + h * head_dim : embed_dim + (h+1) * head_dim]
+- V_bias for head h: [2*embed_dim + h * head_dim : 2*embed_dim + (h+1) * head_dim]
 
 OUTPUT PROJECTION ARCHITECTURE:
 ------------------------------
@@ -149,6 +165,15 @@ __global__ void attention_per_head_kernel(
     // -------------------------------------------------------------------------
     // Step 1: Compute Q for this query position (same for all key positions)
     // -------------------------------------------------------------------------
+    // w_qkv layout: [Q_weights; K_weights; V_weights] where each is [embed_dim, embed_dim]
+    // For multi-head, each section is divided: Q = [Q_h0; Q_h1; ...; Q_h{N-1}]
+    //
+    // Q_weights for head h starts at row: h * head_dim
+    // K_weights for head h starts at row: embed_dim + h * head_dim
+    // V_weights for head h starts at row: 2 * embed_dim + h * head_dim
+    //
+    // bias_qkv layout: [Q_bias; K_bias; V_bias] where each is [embed_dim]
+
     float q_reg[HEAD_DIM];
 
     // Zero initialize
@@ -160,15 +185,17 @@ __global__ void attention_per_head_kernel(
     // Input offset
     int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
 
-    // Q weights for this head
+    // Q weights for this head: w_qkv[head_idx * head_dim : (head_idx+1) * head_dim, :]
     int64_t w_q_head_offset = (int64_t)head_idx * head_dim * embed_dim;
     const float* bias_q_ptr = (bias_qkv != nullptr) ? bias_qkv + head_idx * head_dim : nullptr;
 
-    // Compute Q projection
+    // Compute Q projection: Q = x @ W_q^T
     for (int k = 0; k < embed_dim; k++) {
         float x_val = x[x_offset + k];
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
+            // w_qkv is row-major: w_qkv[row * embed_dim + col]
+            // row = head_idx * head_dim + i, col = k
             q_reg[i] += x_val * w_qkv[w_q_head_offset + i * embed_dim + k];
         }
     }
@@ -197,15 +224,15 @@ __global__ void attention_per_head_kernel(
     // K, V input offset for this key position
     int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
 
-    // K weights
+    // K weights for this head: w_qkv[embed_dim + head_idx * head_dim : embed_dim + (head_idx+1) * head_dim, :]
     int64_t w_k_head_offset = (int64_t)embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
     const float* bias_k_ptr = (bias_qkv != nullptr) ? bias_qkv + embed_dim + head_idx * head_dim : nullptr;
 
-    // V weights
+    // V weights for this head: w_qkv[2*embed_dim + head_idx * head_dim : 2*embed_dim + (head_idx+1) * head_dim, :]
     int64_t w_v_head_offset = (int64_t)2 * embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
     const float* bias_v_ptr = (bias_qkv != nullptr) ? bias_qkv + 2 * embed_dim + head_idx * head_dim : nullptr;
 
-    // Compute K projection
+    // Compute K projection: K = x @ W_k^T
     for (int k = 0; k < embed_dim; k++) {
         float x_val = x[x_k_offset + k];
         #pragma unroll
@@ -222,7 +249,7 @@ __global__ void attention_per_head_kernel(
         }
     }
 
-    // Compute V projection
+    // Compute V projection: V = x @ W_v^T
     for (int k = 0; k < embed_dim; k++) {
         float x_val = x[x_k_offset + k];
         #pragma unroll
