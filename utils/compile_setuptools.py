@@ -73,7 +73,7 @@ def _print_header(text: str):
         print(f"{'=' * 70}")
 
 
-def _print_step(step: str, status: str = ""):
+def _print_step(step: str, status: str = "", use_colors: bool = True):
     """Print a step with optional status."""
     icons = {
         'compiling': '🔨',
@@ -98,7 +98,7 @@ def _print_step(step: str, status: str = ""):
     elif "writing" in step.lower():
         icon = '📝'
 
-    if _use_colors():
+    if use_colors and _use_colors():
         if status:
             print(f"{icon} {step}: {Colors.green(status)}")
         else:
