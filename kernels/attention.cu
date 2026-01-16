@@ -566,18 +566,20 @@ __global__ void attention_per_head_kernel(
     // Number of warps
     int num_warps = (seq_len + WARP_SIZE - 1) / WARP_SIZE;
 
-    if (k_pos < num_warps) {
-        max_score = shared_mem[k_pos];
+    // First warp reduces the partial max from all warps
+    if (warp_id == 0) {
+        max_score = (lane_id < num_warps) ? shared_mem[lane_id] : -INFINITY;
         max_score = warp_reduce_max(max_score);
     }
 
     // Broadcast final max to all threads
-    if (k_pos < num_warps) {
-        shared_mem[k_pos] = max_score;
+    if (warp_id == 0 && lane_id == 0) {
+        shared_mem[0] = max_score;
     }
     __syncthreads();
 
-    max_score = (k_pos < num_warps) ? shared_mem[k_pos / WARP_SIZE] : shared_mem[0];
+    // All threads read the final max score
+    max_score = shared_mem[0];
     max_score = __shfl_sync(0xffffffff, max_score, 0);
 
     // Compute exp and sum_exp
@@ -603,18 +605,19 @@ __global__ void attention_per_head_kernel(
     }
     __syncthreads();
 
-    if (k_pos < num_warps) {
-        sum_exp = shared_mem[k_pos];
+    // First warp reduces the partial sums from all warps
+    if (warp_id == 0) {
+        sum_exp = (lane_id < num_warps) ? shared_mem[lane_id] : 0.0f;
         sum_exp = warp_reduce_sum(sum_exp);
     }
 
     // Broadcast final sum_exp to all threads
-    if (k_pos < num_warps) {
-        shared_mem[k_pos] = sum_exp;
+    if (warp_id == 0 && lane_id == 0) {
+        shared_mem[0] = sum_exp;
     }
     __syncthreads();
 
-    sum_exp = (k_pos < num_warps) ? shared_mem[k_pos / WARP_SIZE] : shared_mem[0];
+    sum_exp = shared_mem[0];
     sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
 
     // Final attention weight for this (query, key) pair
