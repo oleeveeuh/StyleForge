@@ -12,6 +12,22 @@ FIXED in this version:
 - Proper grid/block configuration
 - NO RACE CONDITIONS: deterministic output using proper parallel reduction
 - Support for output bias (bias_out)
+- Comprehensive CUDA error checking and validation
+
+ERROR CHECKING:
+----------------
+The kernel includes extensive validation:
+- CUDA_CHECK: Validates all CUDA API calls
+- CUDA_CHECK_LAST_ERROR: Checks for kernel launch errors
+- validate_shared_memory_size: Ensures shared memory requirements are met
+- validate_seq_len: Checks sequence length limits
+- validate_tensor_shapes: Validates tensor dimensions and constraints
+- validate_grid_dimensions: Validates grid/block configuration
+
+Error messages include:
+- What operation failed (with file:line information)
+- Current configuration (batch_size, seq_len, embed_dim, num_heads)
+- Helpful suggestions for fixing the issue
 
 Performance Target: 8x speedup over PyTorch nn.MultiheadAttention
 
@@ -47,6 +63,8 @@ The second kernel concatenates heads and applies the output projection.
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cmath>
+#include <sstream>
+#include <stdexcept>
 
 // -------------------------------------------------------------------------
 // Constants
@@ -54,6 +72,127 @@ The second kernel concatenates heads and applies the output projection.
 constexpr int WARP_SIZE = 32;
 constexpr int MAX_HEADS = 16;
 constexpr int MAX_THREADS_PER_BLOCK = 1024;
+constexpr int MAX_SEQ_LEN = 32768;  // Maximum supported sequence length
+
+// -------------------------------------------------------------------------
+// CUDA Error Checking Macros
+// -------------------------------------------------------------------------
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = (call); \
+        if (err != cudaSuccess) { \
+            std::ostringstream oss; \
+            oss << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " \
+                << cudaGetErrorString(err); \
+            throw std::runtime_error(oss.str()); \
+        } \
+    } while(0)
+
+#define CUDA_CHECK_LAST_ERROR() \
+    do { \
+        cudaError_t err = cudaGetLastError(); \
+        if (err != cudaSuccess) { \
+            std::ostringstream oss; \
+            oss << "CUDA kernel launch error at " << __FILE__ << ":" << __LINE__ << ": " \
+                << cudaGetErrorString(err); \
+            throw std::runtime_error(oss.str()); \
+        } \
+    } while(0)
+
+#define CUDA_SYNC_CHECK() \
+    do { \
+        CUDA_CHECK(cudaDeviceSynchronize()); \
+        CUDA_CHECK_LAST_ERROR(); \
+    } while(0)
+
+// -------------------------------------------------------------------------
+// Validation Functions
+// -------------------------------------------------------------------------
+inline void validate_shared_memory_size(int head_dim, int seq_len) {
+    // Calculate required shared memory
+    size_t required_bytes = (2 + head_dim) * seq_len * sizeof(float);
+
+    // Query device shared memory limits
+    int device_id;
+    CUDA_CHECK(cudaGetDevice(&device_id));
+
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, device_id));
+
+    size_t shared_mem_per_block = prop.sharedMemPerBlock;
+    size_t shared_mem_per_block_optin = prop.sharedMemPerBlockOptin == 0 ?
+        shared_mem_per_block : prop.sharedMemPerBlockOptin;
+
+    if (required_bytes > shared_mem_per_block_optin) {
+        std::ostringstream oss;
+        oss << "Required shared memory (" << required_bytes << " bytes) "
+            << "exceeds device limit (" << shared_mem_per_block_optin << " bytes). "
+            << "head_dim=" << head_dim << ", seq_len=" << seq_len << ". "
+            << "Reduce sequence length or use a model with fewer attention heads.";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+inline void validate_seq_len(int seq_len) {
+    if (seq_len <= 0) {
+        throw std::runtime_error("seq_len must be positive, got " + std::to_string(seq_len));
+    }
+    if (seq_len > MAX_SEQ_LEN) {
+        std::ostringstream oss;
+        oss << "seq_len (" << seq_len << ") exceeds maximum supported length ("
+            << MAX_SEQ_LEN << "). "
+            << "Please reduce the sequence length or increase MAX_SEQ_LEN in the kernel.";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+inline void validate_tensor_shapes(
+    int batch_size, int seq_len, int embed_dim,
+    int num_heads, int head_dim
+) {
+    if (batch_size <= 0) {
+        throw std::runtime_error("batch_size must be positive, got " + std::to_string(batch_size));
+    }
+    if (embed_dim <= 0) {
+        throw std::runtime_error("embed_dim must be positive, got " + std::to_string(embed_dim));
+    }
+    if (num_heads <= 0) {
+        throw std::runtime_error("num_heads must be positive, got " + std::to_string(num_heads));
+    }
+    if (head_dim <= 0) {
+        throw std::runtime_error("head_dim must be positive, got " + std::to_string(head_dim));
+    }
+    if (embed_dim % num_heads != 0) {
+        std::ostringstream oss;
+        oss << "embed_dim (" << embed_dim << ") must be divisible by num_heads ("
+            << num_heads << ").";
+        throw std::runtime_error(oss.str());
+    }
+    if (head_dim != embed_dim / num_heads) {
+        std::ostringstream oss;
+        oss << "head_dim (" << head_dim << ") does not match embed_dim/num_heads ("
+            << (embed_dim / num_heads) << ").";
+        throw std::runtime_error(oss.str());
+    }
+    if (head_dim > 256) {
+        std::ostringstream oss;
+        oss << "head_dim (" << head_dim << ") exceeds maximum supported (256). "
+            << "Use fewer attention heads or a larger embed_dim.";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+inline void validate_grid_dimensions(dim3 blocks, dim3 threads) {
+    if (blocks.x * blocks.y * blocks.z == 0) {
+        throw std::runtime_error("Grid dimensions must be positive");
+    }
+    if (threads.x > MAX_THREADS_PER_BLOCK) {
+        std::ostringstream oss;
+        oss << "threads.x (" << threads.x << ") exceeds maximum ("
+            << MAX_THREADS_PER_BLOCK << ").";
+        throw std::runtime_error(oss.str());
+    }
+}
 
 // -------------------------------------------------------------------------
 // Device math functions
@@ -602,18 +741,55 @@ torch::Tensor fused_attention_v1(
     torch::optional<torch::Tensor> bias_out,
     float scale
 ) {
+    // =========================================================================
+    // Input Validation
+    // =========================================================================
     TORCH_CHECK(x.device().is_cuda(), "Input x must be on CUDA");
-    TORCH_CHECK(x.dim() == 3, "Input must be 3D (batch, seq, embed)");
+    TORCH_CHECK(w_qkv.device().is_cuda(), "Weight w_qkv must be on CUDA");
+    TORCH_CHECK(w_out.device().is_cuda(), "Weight w_out must be on CUDA");
+    TORCH_CHECK(x.dtype() == torch::kFloat32, "Input x must be float32");
+    TORCH_CHECK(w_qkv.dtype() == torch::kFloat32, "Weight w_qkv must be float32");
+    TORCH_CHECK(w_out.dtype() == torch::kFloat32, "Weight w_out must be float32");
+    TORCH_CHECK(x.dim() == 3, "Input x must be 3D (batch, seq, embed), got shape ", x.sizes());
 
+    // Validate tensor shapes
     int batch_size = x.size(0);
     int seq_len = x.size(1);
     int embed_dim = x.size(2);
 
-    auto out = torch::zeros_like(x);
-
     // Determine number of heads based on embed_dim
     int num_heads = 4;
     int head_dim = embed_dim / num_heads;
+
+    // Validate shapes and constraints
+    validate_tensor_shapes(batch_size, seq_len, embed_dim, num_heads, head_dim);
+    validate_seq_len(seq_len);
+    validate_shared_memory_size(head_dim, seq_len);
+
+    // Validate weight matrix shapes
+    TORCH_CHECK(w_qkv.size(0) == 3 * embed_dim, "w_qkv must have shape [3*embed_dim, embed_dim], got w_qkv.size(0)=", w_qkv.size(0), ", expected 3*", embed_dim, "=", 3 * embed_dim);
+    TORCH_CHECK(w_qkv.size(1) == embed_dim, "w_qkv must have shape [3*embed_dim, embed_dim], got w_qkv.size(1)=", w_qkv.size(1), ", expected embed_dim=", embed_dim);
+    TORCH_CHECK(w_out.size(0) == embed_dim, "w_out must have shape [embed_dim, embed_dim], got w_out.size(0)=", w_out.size(0), ", expected embed_dim=", embed_dim);
+    TORCH_CHECK(w_out.size(1) == embed_dim, "w_out must have shape [embed_dim, embed_dim], got w_out.size(1)=", w_out.size(1), ", expected embed_dim=", embed_dim);
+
+    // Validate bias shapes if provided
+    if (bias_qkv.has_value()) {
+        auto& bias = bias_qkv.value();
+        TORCH_CHECK(bias.device().is_cuda(), "bias_qkv must be on CUDA");
+        TORCH_CHECK(bias.dtype() == torch::kFloat32, "bias_qkv must be float32");
+        TORCH_CHECK(bias.size(0) == 3 * embed_dim, "bias_qkv must have shape [3*embed_dim], got ", bias.sizes());
+    }
+    if (bias_out.has_value()) {
+        auto& bias = bias_out.value();
+        TORCH_CHECK(bias.device().is_cuda(), "bias_out must be on CUDA");
+        TORCH_CHECK(bias.dtype() == torch::kFloat32, "bias_out must be float32");
+        TORCH_CHECK(bias.size(0) == embed_dim, "bias_out must have shape [embed_dim], got ", bias.sizes());
+    }
+
+    // Validate scale parameter
+    TORCH_CHECK(scale > 0.0f, "scale must be positive, got scale=", scale);
+
+    auto out = torch::zeros_like(x);
 
     // Allocate temporary buffer for head outputs: [batch, num_heads, seq_len, head_dim]
     auto head_outputs = torch::zeros({batch_size, num_heads, seq_len, head_dim}, x.options());
@@ -638,6 +814,7 @@ torch::Tensor fused_attention_v1(
     // Grid: batch_size x num_heads x seq_len
     dim3 blocks1(batch_size, num_heads, seq_len);
     dim3 threads1(threads_per_block);
+    validate_grid_dimensions(blocks1, threads1);
 
     // DYNAMIC SHARED MEMORY SIZE for kernel 1
     // 2 * seq_len floats (scores + exp_scores) + seq_len * HEAD_DIM (V accumulation)
@@ -691,6 +868,9 @@ torch::Tensor fused_attention_v1(
         );
     }
 
+    // Check for kernel launch errors
+    CUDA_CHECK_LAST_ERROR();
+
     // =========================================================================
     // KERNEL 2: Concatenate heads and apply output projection
     // =========================================================================
@@ -698,6 +878,7 @@ torch::Tensor fused_attention_v1(
     // Threads: num_heads (each thread handles one head's contribution)
     dim3 blocks2(batch_size, seq_len, embed_dim);
     dim3 threads2(num_heads);
+    validate_grid_dimensions(blocks2, threads2);
 
     // Launch kernel 2: output projection
     if (head_dim == 32) {
@@ -741,6 +922,9 @@ torch::Tensor fused_attention_v1(
             embed_dim
         );
     }
+
+    // Check for kernel launch errors
+    CUDA_CHECK_LAST_ERROR();
 
     return out;
 }

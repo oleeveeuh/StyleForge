@@ -59,6 +59,124 @@ class FusedAttentionFunction(torch.autograd.Function):
     Backward pass uses PyTorch's automatic differentiation (for V1).
     """
 
+    # Maximum supported sequence length
+    MAX_SEQ_LEN = 32768
+    # Maximum supported head dimension
+    MAX_HEAD_DIM = 256
+
+    @staticmethod
+    def _validate_inputs(
+        x: torch.Tensor,
+        w_qkv: torch.Tensor,
+        w_out: torch.Tensor,
+        bias_qkv: Optional[torch.Tensor],
+        bias_out: Optional[torch.Tensor],
+        num_heads: int,
+        scale: float,
+        embed_dim: int,
+        head_dim: int
+    ) -> None:
+        """Validate all input tensors and parameters before kernel launch."""
+        # Check CUDA availability
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA is not available. The fused attention kernel requires CUDA. "
+                "Please run on a CUDA-enabled device or use PyTorch's nn.MultiheadAttention instead."
+            )
+
+        # Check device placement
+        if not x.is_cuda:
+            raise ValueError(f"Input tensor x must be on CUDA device, got {x.device}")
+        if not w_qkv.is_cuda:
+            raise ValueError(f"Weight tensor w_qkv must be on CUDA device, got {w_qkv.device}")
+        if not w_out.is_cuda:
+            raise ValueError(f"Weight tensor w_out must be on CUDA device, got {w_out.device}")
+        if bias_qkv is not None and not bias_qkv.is_cuda:
+            raise ValueError(f"Bias tensor bias_qkv must be on CUDA device, got {bias_qkv.device}")
+        if bias_out is not None and not bias_out.is_cuda:
+            raise ValueError(f"Bias tensor bias_out must be on CUDA device, got {bias_out.device}")
+
+        # Check dtype
+        if x.dtype != torch.float32:
+            raise TypeError(f"Input tensor x must be float32, got {x.dtype}")
+        if w_qkv.dtype != torch.float32:
+            raise TypeError(f"Weight tensor w_qkv must be float32, got {w_qkv.dtype}")
+        if w_out.dtype != torch.float32:
+            raise TypeError(f"Weight tensor w_out must be float32, got {w_out.dtype}")
+
+        # Check tensor shapes
+        if x.dim() != 3:
+            raise ValueError(
+                f"Input tensor x must be 3D [batch, seq_len, embed_dim], "
+                f"got {x.dim()}D tensor with shape {list(x.shape)}"
+            )
+
+        batch_size, seq_len, x_embed_dim = x.shape
+
+        if seq_len <= 0:
+            raise ValueError(f"seq_len must be positive, got {seq_len}")
+        if seq_len > FusedAttentionFunction.MAX_SEQ_LEN:
+            raise ValueError(
+                f"seq_len ({seq_len}) exceeds maximum supported length "
+                f"({FusedAttentionFunction.MAX_SEQ_LEN}). "
+                f"Please reduce the sequence length."
+            )
+
+        # Validate weight matrix shapes
+        expected_qkv_shape = (3 * embed_dim, embed_dim)
+        if w_qkv.shape != expected_qkv_shape:
+            raise ValueError(
+                f"w_qkv must have shape {expected_qkv_shape}, got {w_qkv.shape}. "
+                f"Expected [3*embed_dim={3*embed_dim}, embed_dim={embed_dim}]."
+            )
+
+        expected_out_shape = (embed_dim, embed_dim)
+        if w_out.shape != expected_out_shape:
+            raise ValueError(
+                f"w_out must have shape {expected_out_shape}, got {w_out.shape}. "
+                f"Expected [embed_dim={embed_dim}, embed_dim={embed_dim}]."
+            )
+
+        # Validate bias shapes if provided
+        if bias_qkv is not None:
+            expected_bias_qkv_shape = (3 * embed_dim,)
+            if bias_qkv.shape != expected_bias_qkv_shape:
+                raise ValueError(
+                    f"bias_qkv must have shape {expected_bias_qkv_shape}, got {bias_qkv.shape}"
+                )
+
+        if bias_out is not None:
+            expected_bias_out_shape = (embed_dim,)
+            if bias_out.shape != expected_bias_out_shape:
+                raise ValueError(
+                    f"bias_out must have shape {expected_bias_out_shape}, got {bias_out.shape}"
+                )
+
+        # Validate head dimension
+        if head_dim > FusedAttentionFunction.MAX_HEAD_DIM:
+            raise ValueError(
+                f"head_dim ({head_dim}) exceeds maximum supported ({FusedAttentionFunction.MAX_HEAD_DIM}). "
+                f"Use fewer attention heads or a larger embed_dim."
+            )
+
+        # Validate scale parameter
+        if scale <= 0:
+            raise ValueError(f"scale must be positive, got {scale}")
+
+        # Check shared memory requirements
+        required_shared_mem = (2 + head_dim) * seq_len * 4  # 4 bytes per float
+        device_props = torch.cuda.get_device_properties(x.device)
+        available_shared_mem = device_props.total_memory
+
+        # Rough estimate: if seq_len * head_dim is too large, it may fail
+        if seq_len * head_dim > 10000000:  # 10M elements
+            import warnings
+            warnings.warn(
+                f"Large attention computation: seq_len={seq_len}, head_dim={head_dim}. "
+                f"This may cause out-of-memory errors. "
+                f"Consider using a smaller sequence length or fewer attention heads."
+            )
+
     @staticmethod
     def forward(
         ctx,
@@ -85,6 +203,16 @@ class FusedAttentionFunction(torch.autograd.Function):
         Returns:
             Output tensor [batch, seq_len, embed_dim]
         """
+        # Extract dimensions for validation
+        batch_size, seq_len, embed_dim = x.shape
+        head_dim = embed_dim // num_heads
+
+        # Validate inputs before calling CUDA kernel
+        FusedAttentionFunction._validate_inputs(
+            x, w_qkv, w_out, bias_qkv, bias_out,
+            num_heads, scale, embed_dim, head_dim
+        )
+
         module = get_attention_module()
 
         # Save for backward
@@ -92,16 +220,48 @@ class FusedAttentionFunction(torch.autograd.Function):
         ctx.num_heads = num_heads
         ctx.scale = scale
 
-        # Call CUDA kernel
-        with torch.cuda.nvtx.range("fused_attention_forward"):
-            output = module.fused_attention_v1(
-                x.contiguous(),
-                w_qkv.contiguous(),
-                w_out.contiguous(),
-                bias_qkv,
-                bias_out,
-                scale
-            )
+        # Call CUDA kernel with error handling
+        try:
+            with torch.cuda.nvtx.range("fused_attention_forward"):
+                output = module.fused_attention_v1(
+                    x.contiguous(),
+                    w_qkv.contiguous(),
+                    w_out.contiguous(),
+                    bias_qkv,
+                    bias_out,
+                    scale
+                )
+        except RuntimeError as e:
+            # Enhance error messages with context
+            error_msg = str(e)
+            if "shared memory" in error_msg.lower() or "Shared memory" in error_msg:
+                raise RuntimeError(
+                    f"Shared memory error: {error_msg}\n\n"
+                    f"Configuration: batch_size={batch_size}, seq_len={seq_len}, "
+                    f"embed_dim={embed_dim}, num_heads={num_heads}, head_dim={head_dim}\n"
+                    f"Required shared memory: ~{(2 + head_dim) * seq_len * 4 / 1024:.1f} KB\n\n"
+                    f"Suggestions:\n"
+                    f"1. Reduce sequence length (seq_len)\n"
+                    f"2. Reduce number of attention heads\n"
+                    f"3. Use a GPU with more shared memory"
+                ) from e
+            elif "out of memory" in error_msg.lower() or "CUDA out of memory" in error_msg:
+                raise RuntimeError(
+                    f"CUDA out of memory: {error_msg}\n\n"
+                    f"Configuration: batch_size={batch_size}, seq_len={seq_len}, "
+                    f"embed_dim={embed_dim}, num_heads={num_heads}\n\n"
+                    f"Suggestions:\n"
+                    f"1. Reduce batch_size\n"
+                    f"2. Reduce sequence length (seq_len)\n"
+                    f"3. Use gradient checkpointing\n"
+                    f"4. Use a GPU with more memory"
+                ) from e
+            else:
+                raise RuntimeError(
+                    f"CUDA kernel error: {error_msg}\n\n"
+                    f"Configuration: batch_size={batch_size}, seq_len={seq_len}, "
+                    f"embed_dim={embed_dim}, num_heads={num_heads}"
+                ) from e
 
         return output
 
