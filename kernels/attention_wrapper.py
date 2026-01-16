@@ -163,8 +163,10 @@ class FusedAttentionFunction(torch.autograd.Function):
         if scale <= 0:
             raise ValueError(f"scale must be positive, got {scale}")
 
-        # Check shared memory requirements
-        required_shared_mem = (2 + head_dim) * seq_len * 4  # 4 bytes per float
+        # Check shared memory requirements (with padding for bank conflict avoidance)
+        # Layout: [scores[seq_len], exp_scores[seq_len], PAD, V_accum[seq_len * HEAD_DIM]]
+        padding = (32 - ((2 * seq_len) & 31)) & 31
+        required_shared_mem = ((2 + head_dim) * seq_len + padding) * 4  # 4 bytes per float
         device_props = torch.cuda.get_device_properties(x.device)
         available_shared_mem = device_props.total_memory
 
@@ -235,11 +237,14 @@ class FusedAttentionFunction(torch.autograd.Function):
             # Enhance error messages with context
             error_msg = str(e)
             if "shared memory" in error_msg.lower() or "Shared memory" in error_msg:
+                # Calculate padding for accurate shared memory reporting
+                padding = (32 - ((2 * seq_len) & 31)) & 31
+                required_kb = ((2 + head_dim) * seq_len + padding) * 4 / 1024
                 raise RuntimeError(
                     f"Shared memory error: {error_msg}\n\n"
                     f"Configuration: batch_size={batch_size}, seq_len={seq_len}, "
                     f"embed_dim={embed_dim}, num_heads={num_heads}, head_dim={head_dim}\n"
-                    f"Required shared memory: ~{(2 + head_dim) * seq_len * 4 / 1024:.1f} KB\n\n"
+                    f"Required shared memory: ~{required_kb:.1f} KB (includes {padding} float padding for bank conflict avoidance)\n\n"
                     f"Suggestions:\n"
                     f"1. Reduce sequence length (seq_len)\n"
                     f"2. Reduce number of attention heads\n"
