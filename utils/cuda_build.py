@@ -131,7 +131,8 @@ def compile_inline(
     functions: Optional[List[str]] = None,
     build_directory: Optional[Path] = None,
     verbose: bool = False,
-    with_pybind11: bool = True
+    with_pybind11: bool = True,
+    is_standalone: bool = True
 ):
     """
     Compile CUDA code inline using PyTorch's JIT compilation.
@@ -144,20 +145,39 @@ def compile_inline(
         build_directory: Directory for build artifacts
         verbose: Whether to print compilation output
         with_pybind11: Whether to use pybind11
+        is_standalone: Whether to build as standalone module (better for Colab)
 
     Returns:
         Compiled Python module
     """
+    import os
+    import sys
+    import tempfile
+    import shutil
+
     if build_directory is None:
-        build_directory = Path('build')
+        # Use a more stable build directory path
+        # In Colab, use /tmp to avoid path issues
+        if 'google.colab' in sys.modules:
+            build_directory = Path('/tmp/styleforge_build')
+        else:
+            build_directory = Path('build')
     else:
         build_directory = Path(build_directory)
 
     build_directory.mkdir(parents=True, exist_ok=True)
 
-    # Get build flags
+    # Get build flags - simplify for Colab compatibility
     cuda_info = get_cuda_info()
-    extra_cuda_cflags = cuda_info.get('extra_cuda_cflags', ['-O3'])
+
+    # Simplify flags for better compatibility
+    base_flags = ['-O3']
+    if not ('google.colab' in sys.modules):
+        # Only add arch flags outside Colab (they can cause issues)
+        extra_cuda_cflags = cuda_info.get('extra_cuda_cflags', ['-O3'])
+    else:
+        # Colab: use minimal flags that work
+        extra_cuda_cflags = base_flags
 
     # Prepare kwargs - only include supported parameters
     load_inline_kwargs = {
@@ -167,10 +187,10 @@ def compile_inline(
         'extra_cuda_cflags': extra_cuda_cflags,
         'build_directory': str(build_directory),
         'verbose': verbose,
+        'is_standalone': is_standalone,  # Important for Colab
     }
 
     # Add functions parameter only if specified (not compatible with all PyTorch versions)
-    # We'll skip this for Colab compatibility
     # if functions:
     #     load_inline_kwargs['functions'] = functions
 
@@ -183,16 +203,44 @@ def compile_inline(
             # Fall back to older PyTorch API (Colab uses older PyTorch)
             kwargs = load_inline_kwargs.copy()
             kwargs.pop('with_pybind11', None)
-            module = load_inline(**kwargs)
+            # Also try without is_standalone for older PyTorch
+            try:
+                module = load_inline(**kwargs)
+            except TypeError:
+                kwargs.pop('is_standalone', None)
+                module = load_inline(**kwargs)
+
+        # Add build directory to Python path so imports work
+        build_dir_str = str(build_directory)
+        if build_dir_str not in sys.path:
+            sys.path.insert(0, build_dir_str)
+
     except (ImportError, OSError, RuntimeError) as e:
         # Colab-specific issue: compiled .so file cannot be loaded or compilation fails
         # This is a known PyTorch JIT limitation in some environments
-        raise RuntimeError(
-            f"CUDA JIT compilation encountered an error. "
-            f"This is common in Colab due to PyTorch JIT limitations. "
-            f"Use the baseline PyTorch model instead. "
-            f"Error: {e}"
-        )
+        import traceback
+        error_details = traceback.format_exc()
+
+        # Check if this is the "cannot open shared object file" error
+        if "cannot open shared object file" in str(e) or "No such file or directory" in str(e):
+            raise RuntimeError(
+                f"CUDA JIT compilation failed (shared object loading error).\n\n"
+                f"This is a known issue in Google Colab with PyTorch JIT compilation.\n"
+                f"The kernel compiled successfully but the .so file cannot be imported.\n\n"
+                f"Possible solutions:\n"
+                f"1. Use the PyTorch baseline model (nn.MultiheadAttention) instead\n"
+                f"2. Try restarting the runtime and running the notebook again\n"
+                f"3. Use a different runtime environment\n\n"
+                f"Build directory: {build_directory}\n"
+                f"Original error: {e}"
+            )
+        else:
+            raise RuntimeError(
+                f"CUDA JIT compilation encountered an error. "
+                f"This is common in Colab due to PyTorch JIT limitations. "
+                f"Use the baseline PyTorch model instead. "
+                f"Error: {e}\n\n{error_details}"
+            )
 
     return module
 
