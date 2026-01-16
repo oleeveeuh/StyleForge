@@ -401,12 +401,12 @@ def compile_inline(
     # ========================================================================
     # STEP 2: ENVIRONMENT SETUP
     # ========================================================================
+    # Get PyTorch's build directories (always needed for error handling)
+    pytorch_cache_root = torch._appdirs.user_cache_dir(appname='torch_extensions')
+    pytorch_build_root = _get_pytorch_build_root()
+
     if verbose:
         _print_step("Environment setup", use_colors=use_colors)
-
-        # Get PyTorch's build directories
-        pytorch_cache_root = torch._appdirs.user_cache_dir(appname='torch_extensions')
-        pytorch_build_root = _get_pytorch_build_root()
 
         if use_colors:
             print(f"    PyTorch cache: {Colors.cyan(pytorch_cache_root)}")
