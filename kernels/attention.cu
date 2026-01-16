@@ -624,7 +624,7 @@ __global__ void attention_per_head_kernel(
     // Step 5: Compute weighted V and store in shared memory
     // -------------------------------------------------------------------------
     // Each thread computes its weighted V contribution
-    # Store in shared memory for subsequent reduction
+    // Store in shared memory for subsequent reduction
     for (int i = 0; i < HEAD_DIM; i++) {
         s_V_accum[k_pos * HEAD_DIM + i] = attn_weight * v_reg[i];
     }
@@ -660,7 +660,7 @@ __global__ void attention_per_head_kernel(
 
     // Multi-warp reduction using shared memory
     if (lane_id == 0) {
-        # Store warp partial sums
+        // Store warp partial sums
         for (int i = 0; i < HEAD_DIM; i++) {
             s_V_accum[warp_id * HEAD_DIM + i] = head_output[i];
         }
@@ -669,7 +669,7 @@ __global__ void attention_per_head_kernel(
 
     // Final reduction: only first warp (or lane 0 of each warp) reduces the partial sums
     if (warp_id == 0) {
-        # Each lane in first warp reduces one dimension
+        // Each lane in first warp reduces one dimension
         for (int i = 0; i < HEAD_DIM; i++) {
             float sum = 0.0f;
             // Sum all warp partial results
