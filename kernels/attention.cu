@@ -856,7 +856,8 @@ torch::Tensor fused_attention_v1(
     torch::Tensor w_out,
     torch::optional<torch::Tensor> bias_qkv,
     torch::optional<torch::Tensor> bias_out,
-    float scale
+    float scale,
+    int64_t num_heads
 ) {
     // =========================================================================
     // Input Validation
@@ -874,40 +875,14 @@ torch::Tensor fused_attention_v1(
     int seq_len = x.size(1);
     int embed_dim = x.size(2);
 
-    // Determine number of heads based on embed_dim
+    // Use passed num_heads parameter and compute head_dim
     // Support common head dimensions: 128, 64, 32, 16, 8
-    int num_heads;
-    int head_dim;
+    int head_dim = embed_dim / num_heads;
 
-    if (embed_dim % 128 == 0 && embed_dim / 128 <= 16) {
-        head_dim = 128;
-        num_heads = embed_dim / 128;
-    } else if (embed_dim % 64 == 0 && embed_dim / 64 <= 16) {
-        head_dim = 64;
-        num_heads = embed_dim / 64;
-    } else if (embed_dim % 32 == 0 && embed_dim / 32 <= 16) {
-        head_dim = 32;
-        num_heads = embed_dim / 32;
-    } else if (embed_dim % 16 == 0 && embed_dim / 16 <= 16) {
-        head_dim = 16;
-        num_heads = embed_dim / 16;
-    } else if (embed_dim % 8 == 0 && embed_dim / 8 <= 16) {
-        head_dim = 8;
-        num_heads = embed_dim / 8;
-    } else {
-        // Default: try to infer from user intent
-        // Common case: num_heads is embed_dim / 64 or / 32
-        head_dim = 64;
-        num_heads = embed_dim / 64;
-        if (num_heads == 0 || embed_dim % 64 != 0) {
-            head_dim = 32;
-            num_heads = embed_dim / 32;
-        }
-        if (num_heads == 0 || embed_dim % 32 != 0) {
-            head_dim = embed_dim;
-            num_heads = 1;
-        }
-    }
+    // Validate that head_dim is supported
+    TORCH_CHECK(head_dim == 8 || head_dim == 16 || head_dim == 32 || head_dim == 64 || head_dim == 128,
+        "Unsupported head_dim: ", head_dim, ". Supported values are: 8, 16, 32, 64, 128. ",
+        "For embed_dim=", embed_dim, ", use num_heads such that embed_dim/num_heads is in {8, 16, 32, 64, 128}.");
 
     // Validate shapes and constraints
     validate_tensor_shapes(batch_size, seq_len, embed_dim, num_heads, head_dim);

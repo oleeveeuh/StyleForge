@@ -231,7 +231,8 @@ class FusedAttentionFunction(torch.autograd.Function):
                     w_out.contiguous(),
                     bias_qkv,
                     bias_out,
-                    scale
+                    scale,
+                    num_heads
                 )
         except RuntimeError as e:
             # Enhance error messages with context
