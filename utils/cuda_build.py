@@ -158,18 +158,28 @@ def compile_inline(
     # Get build flags
     cuda_info = get_cuda_info()
     extra_cuda_cflags = cuda_info.get('extra_cuda_cflags', ['-O3'])
-    extra_cxx_cflags = cuda_info.get('extra_cxx_cflags', ['-O3'])
 
-    module = load_inline(
-        name=name,
-        cpp_sources=cpp_source,
-        cuda_sources=cuda_source,
-        functions=functions or [],
-        extra_cuda_cflags=extra_cuda_cflags,
-        build_directory=str(build_directory),
-        verbose=verbose,
-        with_pybind11=with_pybind11
-    )
+    # Prepare kwargs - only include supported parameters
+    load_inline_kwargs = {
+        'name': name,
+        'cpp_sources': [cpp_source] if cpp_source else [],
+        'cuda_sources': [cuda_source] if cuda_source else [],
+        'extra_cuda_cflags': extra_cuda_cflags,
+        'build_directory': str(build_directory),
+        'verbose': verbose,
+    }
+
+    # Add functions parameter only if specified
+    if functions:
+        load_inline_kwargs['functions'] = functions
+
+    # Try with with_pybind11 for newer PyTorch versions
+    try:
+        module = load_inline(**load_inline_kwargs, with_pybind11=with_pybind11)
+    except TypeError:
+        # Fall back for older PyTorch versions (Colab)
+        load_inline_kwargs.pop('with_pybind11', None)
+        module = load_inline(**load_inline_kwargs)
 
     return module
 
