@@ -46,30 +46,15 @@ try:
     with open(cuda_src_path, 'r') as f:
         cuda_source = f.read()
 
-    cpp_source = """
-#include <torch/extension.h>
-
-torch::Tensor fused_attention_v1(
-    torch::Tensor x,
-    torch::Tensor w_qkv,
-    torch::Tensor w_out,
-    torch::optional<torch::Tensor> bias_qkv,
-    torch::optional<torch::Tensor> bias_out,
-    float scale,
-    int64_t num_heads
-);
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_attention_v1", &fused_attention_v1, "Fused Multi-Head Attention V1");
-}
-"""
+    # CUDA file already contains PYBIND11_MODULE, so pass empty cpp_source
+    cpp_source = ""
 
     print("\nCompiling kernel...")
     unique_name = f"test_fused_attention_{int(time.time())}"
 
     module = load_inline(
         name=unique_name,
-        cpp_sources=[cpp_source],
+        cpp_sources=[cpp_source] if cpp_source else None,
         cuda_sources=[cuda_source],
         extra_cuda_cflags=["-O3"],
         verbose=False

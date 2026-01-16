@@ -42,24 +42,8 @@ if "int64_t num_heads" not in cuda_source:
 else:
     print("✓ Verified: num_heads parameter is present in source")
 
-# C++ wrapper source
-cpp_source = """
-#include <torch/extension.h>
-
-torch::Tensor fused_attention_v1(
-    torch::Tensor x,
-    torch::Tensor w_qkv,
-    torch::Tensor w_out,
-    torch::optional<torch::Tensor> bias_qkv,
-    torch::optional<torch::Tensor> bias_out,
-    float scale,
-    int64_t num_heads
-);
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_attention_v1", &fused_attention_v1, "Fused Multi-Head Attention V1");
-}
-"""
+# CUDA file already contains PYBIND11_MODULE, so pass empty cpp_source
+cpp_source = ""
 
 print("\n" + "-" * 70)
 print("Compiling kernel (this may take 30-60 seconds)...")
@@ -74,7 +58,7 @@ try:
 
     module = load_inline(
         name=unique_name,
-        cpp_sources=[cpp_source],
+        cpp_sources=[cpp_source] if cpp_source else None,
         cuda_sources=[cuda_source],
         extra_cuda_cflags=["-O3"],
         verbose=True  # Show compilation output
