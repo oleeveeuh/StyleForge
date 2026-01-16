@@ -17,6 +17,19 @@ Performance Target: 15-20x speedup over PyTorch baseline
 #include <math.h>
 
 // ============================================
+// CUDA Error Checking
+// ============================================
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            printf("CUDA error at %s:%d: %s\n", __FILE__, __LINE__, \
+                   cudaGetErrorString(err)); \
+            std::abort(); \
+        } \
+    } while (0)
+
+// ============================================
 // Configuration
 // ============================================
 #define TILE_SIZE 32

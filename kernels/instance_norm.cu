@@ -18,6 +18,19 @@ Performance Target: 3-5x speedup over PyTorch nn.InstanceNorm2d
 #include <math.h>
 
 // ============================================
+// CUDA Error Checking
+// ============================================
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            printf("CUDA error at %s:%d: %s\n", __FILE__, __LINE__, \
+                   cudaGetErrorString(err)); \
+            std::abort(); \
+        } \
+    } while (0)
+
+// ============================================
 // Configuration
 // ============================================
 #define WARP_SIZE 32
