@@ -735,6 +735,9 @@ __global__ void output_projection_kernel(
     int seq_len,
     int embed_dim
 ) {
+    // Declare dynamic shared memory for reduction across heads
+    extern __shared__ float s_reduce[];
+
     // Grid layout
     int batch_idx = blockIdx.x;
     int seq_idx = blockIdx.y;
@@ -784,7 +787,6 @@ __global__ void output_projection_kernel(
         // General case: use shared memory for reduction
         // Each active thread stores its partial sum
         if (head_idx < num_heads) {
-            extern __shared__ float s_reduce[];
             s_reduce[head_idx] = partial_sum;
         }
         __syncthreads();
@@ -793,7 +795,6 @@ __global__ void output_projection_kernel(
         if (head_idx == 0) {
             float total = 0.0f;
             for (int h = 0; h < num_heads; h++) {
-                extern __shared__ float s_reduce[];
                 total += s_reduce[h];
             }
             int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
