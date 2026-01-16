@@ -173,13 +173,25 @@ def compile_inline(
     if functions:
         load_inline_kwargs['functions'] = functions
 
-    # Try with with_pybind11 for newer PyTorch versions
+    # Compile the module - handle various PyTorch version differences
     try:
-        module = load_inline(**load_inline_kwargs, with_pybind11=with_pybind11)
-    except TypeError:
-        # Fall back for older PyTorch versions (Colab)
-        load_inline_kwargs.pop('with_pybind11', None)
-        module = load_inline(**load_inline_kwargs)
+        # First try newer PyTorch API with with_pybind11
+        try:
+            module = load_inline(**load_inline_kwargs, with_pybind11=with_pybind11)
+        except TypeError:
+            # Fall back to older PyTorch API (Colab uses older PyTorch)
+            kwargs = load_inline_kwargs.copy()
+            kwargs.pop('with_pybind11', None)
+            module = load_inline(**kwargs)
+    except (ImportError, OSError) as e:
+        # Colab-specific issue: compiled .so file cannot be loaded
+        # This is a known PyTorch JIT limitation in some environments
+        raise RuntimeError(
+            f"CUDA JIT compilation encountered an error. "
+            f"This is common in Colab due to PyTorch JIT limitations. "
+            f"Use the baseline PyTorch model instead. "
+            f"Error: {e}"
+        )
 
     return module
 
