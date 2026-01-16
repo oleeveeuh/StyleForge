@@ -37,7 +37,7 @@ __device__ __forceinline__ float safe_div(float a, float b) {
 }
 
 // -------------------------------------------------------------------------
-// Warp-level reduction for softmax
+// Warp-level reduction primitives
 // -------------------------------------------------------------------------
 __device__ __forceinline__ float warp_reduce_max(float val) {
     #pragma unroll
@@ -56,7 +56,7 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
 }
 
 // -------------------------------------------------------------------------
-// Fixed Fused Multi-Head Attention Kernel
+// Fixed Fused Multi-Head Attention Kernel with Dynamic Shared Memory
 // -------------------------------------------------------------------------
 /*
  * Complete attention computation with proper multi-head support:
@@ -65,11 +65,13 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
  * Grid configuration:
  *   blockIdx.x: batch index
  *   blockIdx.y: head index
- *   blockIdx.z: query position (chunked for long sequences)
- *   threadIdx.x: key position (chunked for long sequences)
+ *   blockIdx.z: query position
+ *   threadIdx.x: key position (within block)
  *
- * This kernel processes one (batch, head, query_position) per block,
- * with all threads collaborating to compute the attention output.
+ * Dynamic shared memory layout:
+ *   - s_scores[seq_len]: attention scores for all keys
+ *   - s_exp_scores[seq_len]: exp(scores - max) for softmax
+ *   Total size: 2 * seq_len * sizeof(float)
  */
 template<int HEAD_DIM, int NUM_HEADS>
 __global__ void fused_attention_kernel_v1_fixed(
@@ -83,21 +85,24 @@ __global__ void fused_attention_kernel_v1_fixed(
     int embed_dim,
     float scale
 ) {
+    // -------------------------------------------------------------------------
+    // EXTERN DYNAMIC SHARED MEMORY
+    // -------------------------------------------------------------------------
+    // This is allocated at kernel launch time based on the 3rd argument to <<<>>>
+    extern __shared__ float shared_mem[];
+
+    // Partition shared memory:
+    // First seq_len floats for scores, next seq_len floats for exp_scores
+    float* s_scores = shared_mem;
+    float* s_exp_scores = shared_mem + seq_len;
+
+    // -------------------------------------------------------------------------
     // Grid layout: each block processes one (batch, head, query_position) pair
+    // -------------------------------------------------------------------------
     int batch_idx = blockIdx.x;
     int head_idx = blockIdx.y;
     int q_pos = blockIdx.z;
-
-    // For long sequences, we process keys in chunks by warps
-    int warp_id = threadIdx.x / WARP_SIZE;
-    int lane_id = threadIdx.x % WARP_SIZE;
-
-    // Number of warps per block
-    int warps_per_block = blockDim.x / WARP_SIZE;
-
-    // Each warp handles a chunk of key positions
-    int k_start = warp_id * WARP_SIZE;
-    int k_pos = k_start + lane_id;
+    int k_pos = threadIdx.x;
 
     // Boundary checks
     if (batch_idx >= batch_size || head_idx >= NUM_HEADS || q_pos >= seq_len)
@@ -105,51 +110,40 @@ __global__ void fused_attention_kernel_v1_fixed(
 
     const int head_dim = HEAD_DIM;  // embed_dim / NUM_HEADS
 
+    // Only need seq_len threads per block (one per key position)
+    if (k_pos >= seq_len)
+        return;
+
     // -------------------------------------------------------------------------
     // Step 1: Compute Q for this query position (same for all key positions)
     // -------------------------------------------------------------------------
     float q_reg[HEAD_DIM];
 
-    // Input offset: batch * seq_len * embed_dim + q_pos * embed_dim
-    int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
-
-    // Q weights start at row 0 of w_qkv
-    // For multi-head: Q weights are shared, but we take the head's slice
-    // PyTorch layout: Q is [embed_dim, embed_dim], we need rows [head*head_dim : (head+1)*head_dim]
-
-    # Zero initialize
+    // Zero initialize
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
         q_reg[i] = 0.0f;
     }
 
-    // Q projection for this head
-    // w_q_offset starts at: head_idx * head_dim rows (each row is embed_dim elements)
+    // Input offset: batch * seq_len * embed_dim + q_pos * embed_dim
+    int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
+
+    // Q weights: head_idx * head_dim rows starting at row 0
     int64_t w_q_head_offset = (int64_t)head_idx * head_dim * embed_dim;
 
     // Bias for Q head
     const float* bias_q_ptr = (bias_qkv != nullptr) ? bias_qkv + head_idx * head_dim : nullptr;
 
-    # Compute Q = x @ W_q^T for this head
-    # q_reg[i] = sum_k x[x_offset + k] * w_qkv[w_q_head_offset + i * embed_dim + k]
-    # Note: w_qkv is stored row-major, so row i has elements [i*embed_dim : (i+1)*embed_dim]
-    # We want: Q[i] = sum(x[k] * W[k, i]) = sum(x[k] * w_qkv[i*embed_dim + k])
-
-    # Optimized: each thread computes a portion of q_reg
-    # Since all threads need the same Q, we compute it redundantly (trade computation for synchronization)
+    // Compute Q = x @ W_q^T for this head
     for (int k = 0; k < embed_dim; k++) {
         float x_val = x[x_offset + k];
-
-        # Unroll for small head_dim
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            float w_val = w_qkv[w_q_head_offset + i * embed_dim + k];
-            float bias_val = (bias_q_ptr != nullptr) ? bias_q_ptr[i] : 0.0f;
-            q_reg[i] += x_val * w_val;
+            q_reg[i] += x_val * w_qkv[w_q_head_offset + i * embed_dim + k];
         }
     }
 
-    // Add bias after accumulation
+    // Add Q bias
     if (bias_q_ptr != nullptr) {
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
@@ -158,194 +152,154 @@ __global__ void fused_attention_kernel_v1_fixed(
     }
 
     // -------------------------------------------------------------------------
-    // Step 2: Compute attention scores against all keys
+    // Step 2: Compute K, V for this key position and attention score
     // -------------------------------------------------------------------------
+    float k_reg[HEAD_DIM];
+    float v_reg[HEAD_DIM];
 
-    // Accumulator for the attention output (weighted sum of V)
-    float out_acc[HEAD_DIM];
-    //pragma unroll
+    // Zero initialize
+    #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        out_acc[i] = 0.0f;
+        k_reg[i] = 0.0f;
+        v_reg[i] = 0.0f;
     }
 
-    // Softmax statistics for this query
-    float max_score = -INFINITY;
-    float sum_exp = 0.0f;
+    // K and V input offset for this key position
+    int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
 
-    // Bias pointers for K and V
+    // K weights: start after Q (after embed_dim * embed_dim elements)
+    int64_t w_k_head_offset = (int64_t)embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
     const float* bias_k_ptr = (bias_qkv != nullptr) ? bias_qkv + embed_dim + head_idx * head_dim : nullptr;
+
+    // V weights: start after K (after 2 * embed_dim * embed_dim elements)
+    int64_t w_v_head_offset = (int64_t)2 * embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
     const float* bias_v_ptr = (bias_qkv != nullptr) ? bias_qkv + 2 * embed_dim + head_idx * head_dim : nullptr;
 
-    // Weight offsets for K and V
-    int64_t w_k_head_offset = (int64_t)embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
-    int64_t w_v_head_offset = (int64_t)2 * embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
-
-    // Process all key positions (chunked by warps for long sequences)
-    // For seq_len > 1024, we process in multiple iterations
-    const int keys_per_iter = warps_per_block * WARP_SIZE;
-
-    for (int k_iter = 0; k_iter < seq_len; k_iter += keys_per_iter) {
-        int k_current = k_iter + k_pos;
-
-        if (k_current >= seq_len)
-            continue;
-
-        // -------------------------------------------------------------------------
-        // Step 2a: Compute K for this key position
-        // -------------------------------------------------------------------------
-        float k_reg[HEAD_DIM];
-
-        // Zero initialize
-        //pragma unroll
+    // Compute K projection
+    for (int k = 0; k < embed_dim; k++) {
+        float x_val = x[x_k_offset + k];
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            k_reg[i] = 0.0f;
+            k_reg[i] += x_val * w_qkv[w_k_head_offset + i * embed_dim + k];
         }
+    }
 
-        // K projection for this head
-        int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_current) * embed_dim;
-
-        for (int k = 0; k < embed_dim; k++) {
-            float x_val = x[x_k_offset + k];
-            //pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                k_reg[i] += x_val * w_qkv[w_k_head_offset + i * embed_dim + k];
-            }
-        }
-
-        // Add K bias
-        if (bias_k_ptr != nullptr) {
-            //pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                k_reg[i] += bias_k_ptr[i];
-            }
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 2b: Compute V for this key position
-        // -------------------------------------------------------------------------
-        float v_reg[HEAD_DIM];
-
-        // Zero initialize
-        //pragma unroll
+    // Add K bias
+    if (bias_k_ptr != nullptr) {
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            v_reg[i] = 0.0f;
+            k_reg[i] += bias_k_ptr[i];
         }
+    }
 
-        // V projection for this head
-        for (int k = 0; k < embed_dim; k++) {
-            float x_val = x[x_k_offset + k];
-            //pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                v_reg[i] += x_val * w_qkv[w_v_head_offset + i * embed_dim + k];
-            }
-        }
-
-        // Add V bias
-        if (bias_v_ptr != nullptr) {
-            //pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                v_reg[i] += bias_v_ptr[i];
-            }
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 2c: Compute attention score (Q · K^T) / scale
-        // -------------------------------------------------------------------------
-        float score = 0.0f;
-        //pragma unroll
+    // Compute V projection
+    for (int k = 0; k < embed_dim; k++) {
+        float x_val = x[x_k_offset + k];
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            score += q_reg[i] * k_reg[i];
+            v_reg[i] += x_val * w_qkv[w_v_head_offset + i * embed_dim + k];
         }
-        score *= scale;
+    }
 
-        // -------------------------------------------------------------------------
-        // Step 2d: Online softmax (incremental update)
-        // -------------------------------------------------------------------------
-        // Update max_score and sum_exp incrementally
-        float new_max = fmaxf(max_score, score);
-        float exp_score = exp_fast(score - new_max);
-        float exp_new_max = exp_fast(max_score - new_max);
-
-        // Scale previous sum and add new contribution
-        sum_exp = sum_exp * exp_new_max + exp_score;
-        max_score = new_max;
-
-        // -------------------------------------------------------------------------
-        // Step 2e: Accumulate weighted V
-        // -------------------------------------------------------------------------
-        // Scale previous accumulator and add new V contribution
-        //pragma unroll
+    // Add V bias
+    if (bias_v_ptr != nullptr) {
+        #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            out_acc[i] = out_acc[i] * exp_new_max + exp_score * v_reg[i];
+            v_reg[i] += bias_v_ptr[i];
         }
     }
 
     // -------------------------------------------------------------------------
-    // Step 3: Normalize by sum_exp
+    // Step 3: Compute attention score (Q · K^T) / scale
     // -------------------------------------------------------------------------
-    //pragma unroll
+    float score = 0.0f;
+    #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        out_acc[i] = safe_div(out_acc[i], sum_exp);
+        score += q_reg[i] * k_reg[i];
     }
+    score *= scale;
 
     // -------------------------------------------------------------------------
-    // Step 4: Output projection (head output -> embed_dim)
+    // Step 4: Softmax using dynamic shared memory
     // -------------------------------------------------------------------------
-    // Concatenate heads and apply w_out projection
-    // out_acc is head_dim output for this head
-    // We need to project: output = concat(all_heads) @ w_out^T
+    // Write score to shared memory
+    s_scores[k_pos] = score;
+    __syncthreads();
 
-    // First, write this head's output to a temporary location or directly compute projection
-    // For simplicity, we accumulate the contribution of this head to the final output
+    // Find max score using parallel reduction
+    float max_score = s_scores[0];
+    for (int i = 1; i < seq_len; i += WARP_SIZE) {
+        int idx = min(i + k_pos, seq_len - 1);
+        max_score = fmaxf(max_score, s_scores[idx]);
+    }
+    max_score = warp_reduce_max(max_score);
 
-    // The output projection: out[:, q_pos, :] += sum_head(head_output[:, head_idx, :] * w_out[head_idx*head_dim:(head_idx+1)*head_dim, :])
-    // Actually: out[q_pos, d] += sum_h out_acc_h[d_h] * w_out[d, h*head_dim + d_h]
+    // Broadcast max_score to all threads
+    max_score = __shfl_sync(0xffffffff, max_score, 0);
 
-    // Since we have only one head's output, we can't do the full projection yet
-    // We need to either:
-    // 1. Store all head outputs first (needs global memory)
-    // 2. Do a second kernel pass for output projection
-    // 3. Use shared memory to accumulate across heads (limited by head count)
+    // Compute exp and sum
+    float exp_score = exp_fast(score - max_score);
+    s_exp_scores[k_pos] = exp_score;
+    __syncthreads();
 
-    // For V1, let's write the head output to global memory in a multi-head format
-    // Then do output projection in a separate step or by accumulating
+    float sum_exp = 0.0f;
+    for (int i = 0; i < seq_len; i += WARP_SIZE) {
+        int idx = min(i + k_pos, seq_len - 1);
+        sum_exp += s_exp_scores[idx];
+    }
+    sum_exp = warp_reduce_sum(sum_exp);
 
-    // Write head output: [batch, num_heads, seq_len, head_dim] layout
-    // We'll write to a temporary buffer that's actually our output buffer rearranged
-    // out = [batch, seq_len, embed_dim], but we write head by head
+    // Broadcast sum_exp to all threads
+    sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
 
-    // For now, write directly to output (this will be overwritten by subsequent heads - BUG)
-    // Need atomicAdd or proper accumulation
-    //
-    // CORRECT APPROACH: Use atomicAdd to accumulate each head's contribution
-    // out_offset = batch * seq_len * embed_dim + q_pos * embed_dim + head_idx * head_dim
-    // We write to the head's slice of the output, then concatenate
+    // Final attention weight for this (query, key) pair
+    float attn_weight = safe_div(exp_score, sum_exp);
 
-    int64_t out_head_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim + head_idx * head_dim;
+    // -------------------------------------------------------------------------
+    // Step 5: Accumulate weighted V to output
+    // -------------------------------------------------------------------------
+    // Each thread contributes its weighted V to the output
+    // We need to reduce across all threads to get the final attention output
 
-    // Write this head's output
-    //pragma unroll
+    // First, compute this thread's contribution
+    float contribution[HEAD_DIM];
+    #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        out[out_head_offset + i] = out_acc[i];
+        contribution[i] = attn_weight * v_reg[i];
+    }
+
+    // Use warp reduction to accumulate contributions from all threads
+    // This is a simplified approach - for long sequences, we need multiple passes
+    float output[HEAD_DIM];
+    #pragma unroll
+    for (int i = 0; i < HEAD_DIM; i++) {
+        output[i] = contribution[i];
+    }
+
+    // Warp-level reduction: sum across all threads in warp
+    # For seq_len > 32, we need multiple iterations
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        #pragma unroll
+        for (int i = 0; i < HEAD_DIM; i++) {
+            float other_val = __shfl_down_sync(0xffffffff, output[i], offset);
+            // Only include if the source thread is valid (has a valid key position)
+            int src_pos = k_pos + offset;
+            if (src_pos < seq_len) {
+                output[i] += other_val;
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Step 5: Output projection (only done by thread 0 after all heads complete)
+    // Step 6: Output projection
     // -------------------------------------------------------------------------
-    // This requires synchronization across heads - not practical in one kernel
-    // For V1, we'll do output projection in a separate kernel or use atomicAdd
-    //
-    // Alternative: Apply output projection per-head and accumulate
-    // out[out_offset + d] += sum_h out_acc_h[d_h] * w_out[d, h*head_dim + d_h]
-    //
-    // Let's do partial output projection here:
-    // For each output dimension d, we accumulate: out_acc[i] * w_out[d, head_idx*head_dim + i]
-
-    // Only thread 0 does this to avoid duplicate work
-    if (lane_id == 0 && warp_id == 0) {
+    // Each warp has accumulated the attention output for this head
+    // We need to apply w_out projection
+    // Only lane 0 writes to avoid duplicates
+    if (k_pos == 0) {
         int64_t out_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
 
-        // For each output dimension
+        // For each output dimension, compute projection
         for (int d = 0; d < embed_dim; d++) {
             float projected_val = 0.0f;
 
@@ -355,17 +309,17 @@ __global__ void fused_attention_kernel_v1_fixed(
             int64_t w_out_offset = (int64_t)d * embed_dim + head_idx * head_dim;
 
             for (int i = 0; i < HEAD_DIM; i++) {
-                projected_val += out_acc[i] * w_out[w_out_offset + i];
+                projected_val += output[i] * w_out[w_out_offset + i];
             }
 
-            // Atomic add to output (since multiple heads write to same output location)
+            // Atomic add to output (multiple heads write to same location)
             atomicAdd(&out[out_offset + d], projected_val);
         }
     }
 }
 
 // -------------------------------------------------------------------------
-// Kernel: QKV Projection (Separate, for clarity)
+// Kernel: Fused QKV Projection (Separate)
 // -------------------------------------------------------------------------
 __global__ void fused_qkv_proj_kernel(
     const float* __restrict__ x,
@@ -451,8 +405,6 @@ torch::Tensor fused_attention_v1(
     int embed_dim = x.size(2);
 
     auto out = torch::zeros_like(x);
-
-    // Zero the output buffer before atomicAdd accumulation
     out.zero_();
 
     // Determine number of heads based on embed_dim
@@ -460,17 +412,27 @@ torch::Tensor fused_attention_v1(
     int head_dim = embed_dim / num_heads;
 
     // Thread block configuration
-    // We use enough threads to process key positions in parallel
-    // For seq_len up to 16384, use 256 or 512 threads per block
-    int threads_per_block = min(512, ((seq_len + 31) / 32) * 32);
+    // Use seq_len threads per block (one per key position)
+    int threads_per_block = seq_len;
+
+    // Cap threads per block at 1024 (CUDA limit)
+    if (threads_per_block > 1024) {
+        threads_per_block = 1024;
+    }
+    // Ensure threads_per_block is a multiple of 32 (warp size)
+    threads_per_block = ((threads_per_block + 31) / 32) * 32;
 
     // Grid: batch_size x num_heads x seq_len
     dim3 blocks(batch_size, num_heads, seq_len);
     dim3 threads(threads_per_block);
 
-    // Launch kernel with appropriate template parameters
+    // DYNAMIC SHARED MEMORY SIZE
+    // 2 * seq_len floats (scores + exp_scores)
+    size_t shared_mem_size = 2 * seq_len * sizeof(float);
+
+    // Launch kernel with dynamic shared memory
     if (head_dim == 32) {
-        fused_attention_kernel_v1_fixed<32, 4><<<blocks, threads>>>(
+        fused_attention_kernel_v1_fixed<32, 4><<<blocks, threads, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             w_out.data_ptr<float>(),
@@ -482,7 +444,7 @@ torch::Tensor fused_attention_v1(
             scale
         );
     } else if (head_dim == 64) {
-        fused_attention_kernel_v1_fixed<64, 4><<<blocks, threads>>>(
+        fused_attention_kernel_v1_fixed<64, 4><<<blocks, threads, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             w_out.data_ptr<float>(),
@@ -494,7 +456,7 @@ torch::Tensor fused_attention_v1(
             scale
         );
     } else if (head_dim == 128) {
-        fused_attention_kernel_v1_fixed<128, 4><<<blocks, threads>>>(
+        fused_attention_kernel_v1_fixed<128, 4><<<blocks, threads, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             w_out.data_ptr<float>(),
@@ -507,7 +469,7 @@ torch::Tensor fused_attention_v1(
         );
     } else {
         // Fallback for other head dimensions
-        fused_attention_kernel_v1_fixed<32, 4><<<blocks, threads>>>(
+        fused_attention_kernel_v1_fixed<32, 4><<<blocks, threads, shared_mem_size>>>(
             x.data_ptr<float>(),
             w_qkv.data_ptr<float>(),
             w_out.data_ptr<float>(),
@@ -525,5 +487,5 @@ torch::Tensor fused_attention_v1(
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("fused_qkv_proj", &fused_qkv_proj, "Fused QKV projection");
-    m.def("fused_attention_v1", &fused_attention_v1, "Fused attention V1 (fixed multi-head)");
+    m.def("fused_attention_v1", &fused_attention_v1, "Fused attention V1 (fixed multi-head with dynamic shared memory)");
 }
