@@ -387,7 +387,9 @@ def compile_with_setuptools(
         f.write(cuda_source)
 
     if cpp_source:
-        cpp_file = build_dir / f"{name}.cpp"
+        # Use a different name for cpp file to avoid ninja build conflicts
+        # Both .cu and .cpp files with same base name would compile to same .o file
+        cpp_file = build_dir / f"{name}_bindings.cpp"
         with open(cpp_file, 'w') as f:
             f.write(cpp_source)
 
