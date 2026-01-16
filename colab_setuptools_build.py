@@ -41,24 +41,9 @@ if "int64_t num_heads" not in cuda_source:
 else:
     print("✓ Verified: num_heads parameter is in source")
 
-# C++ wrapper source
-cpp_source = """
-#include <torch/extension.h>
-
-torch::Tensor fused_attention_v1(
-    torch::Tensor x,
-    torch::Tensor w_qkv,
-    torch::Tensor w_out,
-    torch::optional<torch::Tensor> bias_qkv,
-    torch::optional<torch::Tensor> bias_out,
-    float scale,
-    int64_t num_heads
-);
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_attention_v1", &fused_attention_v1, "Fused Multi-Head Attention V1");
-}
-"""
+# The CUDA file already contains PYBIND11_MODULE, so we don't need a separate cpp file
+# Passing empty cpp_source to avoid duplicate PyInit definitions
+cpp_source = ""
 
 print("\n" + "-" * 70)
 print("Compiling with setuptools (this may take 2-3 minutes)...")
