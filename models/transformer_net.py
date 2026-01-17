@@ -302,6 +302,17 @@ class TransformerNet(nn.Module):
                     break
 
             if not mapped:
+                # Map weight/bias to gamma/beta for FusedInstanceNorm2d
+                if name.endswith('.weight'):
+                    mapped_key = name[:-7] + '.gamma'
+                    mapped_state_dict[mapped_key] = v
+                    mapped = True
+                elif name.endswith('.bias'):
+                    mapped_key = name[:-5] + '.beta'
+                    mapped_state_dict[mapped_key] = v
+                    mapped = True
+
+            if not mapped:
                 # Use as-is if no mapping found
                 mapped_state_dict[name] = v
 
