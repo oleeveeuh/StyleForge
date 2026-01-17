@@ -524,6 +524,98 @@ __global__ void attention_per_head_kernel(
     );
 
     // -------------------------------------------------------------------------
+    // DEBUG: Print values for first batch, first head, first query, first key
+    // -------------------------------------------------------------------------
+    if (batch_idx == 0 && head_idx == 0 && q_pos == 0 && k_pos == 0) {
+        printf("\n=== KERNEL DEBUG: batch=0, head=0, q_pos=0, k_pos=0 ===\n");
+        printf("embed_dim=%d, HEAD_DIM=%d, head_idx=%d, scale=%.6f\n", embed_dim, HEAD_DIM, head_idx, scale);
+        printf("x_offset=%lld, w_q_head_offset=%lld\n", x_offset, w_q_head_offset);
+
+        // Print input x values
+        printf("Input x[x_offset:x_offset+5]: ");
+        for (int i = 0; i < 5; i++) {
+            printf("%.6f ", x[x_offset + i]);
+        }
+        printf("\n");
+
+        // Print Q weights (first row)
+        printf("w_qkv[w_q_head_offset + 0:5]: ");
+        for (int i = 0; i < 5; i++) {
+            printf("%.6f ", w_qkv[w_q_head_offset + i]);
+        }
+        printf("\n");
+
+        // Print Q bias
+        if (bias_q_ptr != nullptr) {
+            printf("bias_q[0:5]: ");
+            for (int i = 0; i < 5; i++) {
+                printf("%.6f ", bias_q_ptr[i]);
+            }
+            printf("\n");
+        } else {
+            printf("bias_q: nullptr\n");
+        }
+
+        // Print computed Q values
+        printf("q_reg[0:5]: ");
+        for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+            printf("%.6f ", q_reg[i]);
+        }
+        printf("\n");
+
+        printf("x_k_offset=%lld, w_k_head_offset=%lld\n", x_k_offset, w_k_head_offset);
+        printf("w_k_head_offset=%lld\n", w_k_head_offset);
+
+        // Print K weights (first row)
+        printf("w_qkv[w_k_head_offset + 0:5]: ");
+        for (int i = 0; i < 5; i++) {
+            printf("%.6f ", w_qkv[w_k_head_offset + i]);
+        }
+        printf("\n");
+
+        // Print K bias
+        if (bias_k_ptr != nullptr) {
+            printf("bias_k[0:5]: ");
+            for (int i = 0; i < 5; i++) {
+                printf("%.6f ", bias_k_ptr[i]);
+            }
+            printf("\n");
+        }
+
+        // Print computed K values
+        printf("k_reg[0:5]: ");
+        for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+            printf("%.6f ", k_reg[i]);
+        }
+        printf("\n");
+
+        printf("w_v_head_offset=%lld\n", w_v_head_offset);
+
+        // Print V weights (first row)
+        printf("w_qkv[w_v_head_offset + 0:5]: ");
+        for (int i = 0; i < 5; i++) {
+            printf("%.6f ", w_qkv[w_v_head_offset + i]);
+        }
+        printf("\n");
+
+        // Print V bias
+        if (bias_v_ptr != nullptr) {
+            printf("bias_v[0:5]: ");
+            for (int i = 0; i < 5; i++) {
+                printf("%.6f ", bias_v_ptr[i]);
+            }
+            printf("\n");
+        }
+
+        // Print computed V values
+        printf("v_reg[0:5]: ");
+        for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+            printf("%.6f ", v_reg[i]);
+        }
+        printf("\n");
+    }
+
+    // -------------------------------------------------------------------------
     // Step 3: Compute attention score (Q · K^T) / scale
     // -------------------------------------------------------------------------
     float score = 0.0f;
@@ -531,6 +623,7 @@ __global__ void attention_per_head_kernel(
     for (int i = 0; i < HEAD_DIM; i++) {
         score += q_reg[i] * k_reg[i];
     }
+    float raw_score = score;  // DEBUG
     score *= scale;
 
     // -------------------------------------------------------------------------
@@ -621,6 +714,16 @@ __global__ void attention_per_head_kernel(
     // Final attention weight for this (query, key) pair
     float attn_weight = safe_div(exp_score, sum_exp);
 
+    // DEBUG: Print attention computation for k_pos=0
+    if (batch_idx == 0 && head_idx == 0 && q_pos == 0 && k_pos == 0) {
+        printf("raw_score (Q.K^T): %.6f\n", raw_score);
+        printf("scaled_score: %.6f\n", score);
+        printf("max_score: %.6f\n", max_score);
+        printf("exp_score (k_pos=0): %.6f\n", exp_score);
+        printf("sum_exp: %.6f\n", sum_exp);
+        printf("attn_weight (k_pos=0): %.6f\n", attn_weight);
+    }
+
     // -------------------------------------------------------------------------
     // Step 5: Compute weighted V and store in shared memory
     // -------------------------------------------------------------------------
@@ -700,6 +803,17 @@ __global__ void attention_per_head_kernel(
     if (warp_id == 0 && lane_id == 0) {
         // Write the final reduced head output from head_output (lane 0 has the broadcast result)
         int64_t head_out_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
+
+        // DEBUG: Print final head output for batch=0, head=0, q_pos=0
+        if (batch_idx == 0 && head_idx == 0 && q_pos == 0) {
+            printf("Final head_output[head=0, q_pos=0, 0:5]: ");
+            for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+                printf("%.6f ", head_output[i]);
+            }
+            printf("\n");
+            printf("head_out_offset=%lld\n", head_out_offset);
+        }
+
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
             head_outputs[head_out_offset + i] = head_output[i];
