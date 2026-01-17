@@ -636,22 +636,25 @@ __global__ void attention_per_head_kernel(
     // -------------------------------------------------------------------------
     // Each output dimension is reduced separately
     // Final output for this head: weighted sum of all V values
+    // We need to sum over ALL key positions k in [0, seq_len-1]
 
-    // Per-thread accumulator for this thread's contribution across all key positions
+    // Per-thread accumulator
     float head_output[HEAD_DIM];
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
         head_output[i] = 0.0f;
     }
 
-    // Each thread contributes its weighted V value at position k_pos
-    // The value s_V_accum[k_pos * HEAD_DIM + i] = attn_weight * v_reg[i]
-    #pragma unroll
-    for (int i = 0; i < HEAD_DIM; i++) {
-        head_output[i] = s_V_accum[k_pos * HEAD_DIM + i];
+    // Each thread sums multiple key positions using strided access
+    // Thread t processes positions: t, t + blockDim.x, t + 2*blockDim.x, ...
+    for (int k = k_pos; k < seq_len; k += blockDim.x) {
+        #pragma unroll
+        for (int i = 0; i < HEAD_DIM; i++) {
+            head_output[i] += s_V_accum[k * HEAD_DIM + i];
+        }
     }
 
-    // Warp-level reduction: sum all contributions from threads in this warp
+    // Warp-level reduction: sum partial contributions from threads in this warp
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
         head_output[i] = warp_reduce_sum(head_output[i]);
