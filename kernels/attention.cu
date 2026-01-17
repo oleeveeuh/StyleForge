@@ -101,6 +101,9 @@ computes per-head attention outputs and stores them in a temporary buffer.
 The second kernel concatenates heads and applies the output projection.
 */
 
+// DEBUG FLAG: Set to 0 to disable all printf statements for production
+#define ATTENTION_DEBUG 0
+
 #include <torch/extension.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -413,7 +416,9 @@ __global__ void attention_per_head_kernel(
 ) {
     // MARKER: Print at kernel start to verify compilation
     if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+#if ATTENTION_DEBUG
         printf("\n*** ATTENTION_KERNEL_START: HEAD_DIM=%d ***\n", HEAD_DIM);
+#endif
     }
     // -------------------------------------------------------------------------
     // EXTERN DYNAMIC SHARED MEMORY (OPTIMIZED LAYOUT)
@@ -542,94 +547,170 @@ __global__ void attention_per_head_kernel(
     // -------------------------------------------------------------------------
     // DEBUG: Print values for first batch, first head, first query, first key
     // -------------------------------------------------------------------------
+#if ATTENTION_DEBUG
     if (batch_idx == 0 && head_idx == 0 && q_pos == 0 && k_pos == 0) {
+#if ATTENTION_DEBUG
         printf("\n=== KERNEL DEBUG: batch=0, head=0, q_pos=0, k_pos=0 ===\n");
+#endif
+#if ATTENTION_DEBUG
         printf("embed_dim=%d, HEAD_DIM=%d, head_idx=%d, scale=%.6f\n", embed_dim, HEAD_DIM, head_idx, scale);
+#endif
+#if ATTENTION_DEBUG
         printf("x_offset=%lld, q_start_row=%d\n", x_offset, q_start_row);
+#endif
+#if ATTENTION_DEBUG
         printf("x pointer: %p\n", (void*)x);
+#endif
 
         // Print input x values
+#if ATTENTION_DEBUG
         printf("Input x[x_offset:x_offset+5]: ");
+#endif
         for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", x[x_offset + i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
 
         // Print Q weights (first row of Q section for this head)
+#if ATTENTION_DEBUG
         printf("w_qkv[q_start_row * embed_dim : +5]: ");
+#endif
         for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", w_qkv[q_start_row * embed_dim + i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
 
         // Print Q bias
         if (bias_qkv != nullptr) {
+#if ATTENTION_DEBUG
             printf("bias_qkv[q_start_row : +5]: ");
+#endif
             for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
                 printf("%.6f ", bias_qkv[q_start_row + i]);
+#endif
             }
+#if ATTENTION_DEBUG
             printf("\n");
+#endif
         } else {
+#if ATTENTION_DEBUG
             printf("bias_qkv: nullptr\n");
+#endif
         }
 
         // Print computed Q values
+#if ATTENTION_DEBUG
         printf("q_reg[0:5]: ");
+#endif
         for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", q_reg[i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
 
+#if ATTENTION_DEBUG
         printf("x_k_offset=%lld, k_start_row=%d\n", x_k_offset, k_start_row);
+#endif
 
         // Print K weights (first row of K section for this head)
+#if ATTENTION_DEBUG
         printf("w_qkv[k_start_row * embed_dim : +5]: ");
+#endif
         for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", w_qkv[k_start_row * embed_dim + i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
 
         // Print K bias
         if (bias_qkv != nullptr) {
+#if ATTENTION_DEBUG
             printf("bias_qkv[k_start_row : +5]: ");
+#endif
             for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
                 printf("%.6f ", bias_qkv[k_start_row + i]);
+#endif
             }
+#if ATTENTION_DEBUG
             printf("\n");
+#endif
         }
 
         // Print computed K values
+#if ATTENTION_DEBUG
         printf("k_reg[0:5]: ");
+#endif
         for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", k_reg[i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
 
+#if ATTENTION_DEBUG
         printf("v_start_row=%d\n", v_start_row);
+#endif
 
         // Print V weights (first row of V section for this head)
+#if ATTENTION_DEBUG
         printf("w_qkv[v_start_row * embed_dim : +5]: ");
+#endif
         for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", w_qkv[v_start_row * embed_dim + i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
 
         // Print V bias
         if (bias_qkv != nullptr) {
+#if ATTENTION_DEBUG
             printf("bias_qkv[v_start_row : +5]: ");
+#endif
             for (int i = 0; i < 5; i++) {
+#if ATTENTION_DEBUG
                 printf("%.6f ", bias_qkv[v_start_row + i]);
+#endif
             }
+#if ATTENTION_DEBUG
             printf("\n");
+#endif
         }
 
         // Print computed V values
+#if ATTENTION_DEBUG
         printf("v_reg[0:5]: ");
+#endif
         for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+#if ATTENTION_DEBUG
             printf("%.6f ", v_reg[i]);
+#endif
         }
+#if ATTENTION_DEBUG
         printf("\n");
+#endif
     }
+#endif
 
     // -------------------------------------------------------------------------
     // Step 3: Compute attention score (Q · K^T) / scale
@@ -731,14 +812,28 @@ __global__ void attention_per_head_kernel(
     float attn_weight = safe_div(exp_score, sum_exp);
 
     // DEBUG: Print attention computation for k_pos=0
+#if ATTENTION_DEBUG
     if (batch_idx == 0 && head_idx == 0 && q_pos == 0 && k_pos == 0) {
+#if ATTENTION_DEBUG
         printf("raw_score (Q.K^T): %.6f\n", raw_score);
+#endif
+#if ATTENTION_DEBUG
         printf("scaled_score: %.6f\n", score);
+#endif
+#if ATTENTION_DEBUG
         printf("max_score: %.6f\n", max_score);
+#endif
+#if ATTENTION_DEBUG
         printf("exp_score (k_pos=0): %.6f\n", exp_score);
+#endif
+#if ATTENTION_DEBUG
         printf("sum_exp: %.6f\n", sum_exp);
+#endif
+#if ATTENTION_DEBUG
         printf("attn_weight (k_pos=0): %.6f\n", attn_weight);
+#endif
     }
+#endif
 
     // -------------------------------------------------------------------------
     // Step 5: Compute weighted V and store in shared memory
@@ -821,14 +916,24 @@ __global__ void attention_per_head_kernel(
         int64_t head_out_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
 
         // DEBUG: Print final head output for batch=0, head=0, q_pos=0
+#if ATTENTION_DEBUG
         if (batch_idx == 0 && head_idx == 0 && q_pos == 0) {
+#if ATTENTION_DEBUG
             printf("Final head_output[head=0, q_pos=0, 0:5]: ");
+#endif
             for (int i = 0; i < 5 && i < HEAD_DIM; i++) {
+#if ATTENTION_DEBUG
                 printf("%.6f ", head_output[i]);
+#endif
             }
+#if ATTENTION_DEBUG
             printf("\n");
+#endif
+#if ATTENTION_DEBUG
             printf("head_out_offset=%lld\n", head_out_offset);
+#endif
         }
+#endif
 
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
@@ -867,7 +972,9 @@ __global__ void output_projection_kernel(
 ) {
     // MARKER: This is the FIXED version with start_row parameter
     if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+#if ATTENTION_DEBUG
         printf("\n*** KERNEL VERSION: FIXED_QKV_PROJECTION ***\n");
+#endif
     }
 
     // Declare dynamic shared memory for reduction across heads
@@ -898,25 +1005,39 @@ __global__ void output_projection_kernel(
     float partial_sum = 0.0f;
 
     // DEBUG: Print values for first batch, first seq, first out_dim to debug
+#if ATTENTION_DEBUG
     if (batch_idx == 0 && seq_idx == 0 && out_dim == 0) {
+#if ATTENTION_DEBUG
         printf("output_proj: batch=%d seq=%d out_dim=%d head=%d HEAD_DIM=%d\n",
                batch_idx, seq_idx, out_dim, head_idx, HEAD_DIM);
+#endif
+
+#if ATTENTION_DEBUG
         printf("  head_offset=%lld, w_out_offset=%lld\n", head_offset, w_out_offset);
+#endif
         // Print first few values
         for (int i = 0; i < 3 && i < HEAD_DIM; i++) {
+#if ATTENTION_DEBUG
             printf("  head_ptr[%d]=%.6f, w_out_ptr[%d]=%.6f\n",
                    i, head_ptr[i], i, w_out_ptr[i]);
+#endif
+
         }
     }
+#endif
 
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
         partial_sum += head_ptr[i] * w_out_ptr[i];
     }
 
+#if ATTENTION_DEBUG
     if (batch_idx == 0 && seq_idx == 0 && out_dim == 0) {
+#if ATTENTION_DEBUG
         printf("  partial_sum (before reduction)=%.6f\n", partial_sum);
+#endif
     }
+#endif
 
     // Lane 0 writes the result (plus bias if provided)
     int lane_id = head_idx % WARP_SIZE;
@@ -944,9 +1065,13 @@ __global__ void output_projection_kernel(
             }
 
             // DEBUG: Print final result for first output
+#if ATTENTION_DEBUG
             if (batch_idx == 0 && seq_idx == 0 && out_dim == 0) {
+#if ATTENTION_DEBUG
                 printf("  result (after reduction)=%.6f, out_offset=%lld\n", result, out_offset);
+#endif
             }
+#endif
 
             out[out_offset] = result;
         }
