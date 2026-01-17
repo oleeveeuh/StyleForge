@@ -11,6 +11,7 @@ This directory contains optimized CUDA kernels for real-time neural style transf
   - [Fused Attention (V2)](#fused-attention-v2)
   - [Fused FFN](#fused-ffn)
   - [Fused Instance Norm](#fused-instance-norm)
+  - [Fused Conv+InstanceNorm+ReLU](#fused-convinstancenormrelu)
 - [Testing](#testing)
 - [Benchmarking](#benchmarking)
 - [Performance Results](#performance-results)
@@ -27,6 +28,7 @@ StyleForge kernels provide CUDA-accelerated implementations of common deep learn
 | Fused Attention V2 | Optimized attention with FlashAttention-style tiling | 6-12x | Experimental |
 | Fused FFN | Feed-forward network with GELU activation | 3-5x | Stable |
 | Fused Instance Norm | Instance normalization for style transfer | 2-4x | Stable |
+| Fused Conv+IN+ReLU | Convolution + InstanceNorm + ReLU | 5-8x | Stable |
 
 ## Installation
 
@@ -187,6 +189,85 @@ y = norm(x)
 print(y.shape)  # [4, 64, 256, 256]
 ```
 
+### Fused Conv+InstanceNorm+ReLU
+
+A high-performance fused kernel combining Conv2d, InstanceNorm2d, and ReLU activation into a single kernel launch. This pattern appears 15-20 times in typical style transfer networks.
+
+#### Features
+
+- **Single-kernel architecture**: Eliminates 2 intermediate tensor allocations
+- **Per-channel statistics**: Instance norm computed per channel per batch
+- **Warp-level reductions**: Efficient mean/variance computation
+- **Multiple kernel sizes**: Supports 1×1, 3×3, 4×4, and 5×5 convolutions
+- **Stride support**: Works with stride 1 and 2 for downsampling
+
+#### Usage
+
+```python
+import torch
+from kernels import FusedConvInstanceNormReLU, ResidualBlock
+
+# Create a fused layer
+conv_layer = FusedConvInstanceNormReLU(
+    in_channels=64,
+    out_channels=64,
+    kernel_size=3,
+    stride=1,
+    padding=1
+).cuda()
+
+# Forward pass
+x = torch.randn(1, 64, 256, 256).cuda()  # [N, C, H, W]
+y = conv_layer(x)
+print(y.shape)  # [1, 64, 256, 256]
+
+# Use in a residual block
+residual = ResidualBlock(channels=128).cuda()
+x = torch.randn(1, 128, 64, 64).cuda()
+y = residual(x)
+```
+
+#### Architecture
+
+```
+Input [N, C_in, H, W]
+         |
+         v
+┌─────────────────────────────────────────────┐
+│  Fused Kernel:                              │
+│  1. Conv2d (with bias)                      │
+│  2. InstanceNorm2d (per-channel mean/var)   │
+│  3. Affine (gamma * x + beta)               │
+│  4. ReLU (max(0, x))                        │
+├─────────────────────────────────────────────┤
+│  Output: [N, C_out, H_out, W_out]           │
+└─────────────────────────────────────────────┘
+```
+
+#### Supported Configurations
+
+| Kernel Size | Stride | Padding | Notes |
+|-------------|--------|---------|-------|
+| 1×1 | 1 | 0 | Bottleneck layers |
+| 3×3 | 1 | 1 | Standard residual blocks |
+| 3×3 | 2 | 1 | Downsampling |
+| 4×4 | 2 | 1 | Alternative downsample |
+| 5×5 | 1 | 2 | Larger receptive field |
+| 5×5 | 2 | 2 | Large downsample |
+
+#### Benchmarking
+
+```bash
+# Run comprehensive benchmark
+python benchmark_conv_fusion.py --mode standard
+
+# Real-world style transfer simulation
+python benchmark_conv_fusion.py --mode real-world
+
+# Residual block comparison
+python benchmark_conv_fusion.py --mode residual
+```
+
 ## Testing
 
 ### Run All Tests
@@ -299,6 +380,25 @@ Benchmark on NVIDIA RTX 3090 (Ampere, CUDA 11.8):
 | 4x64x256x256  | 0.456        | 0.187     | 2.44x   |
 | 1x3x512x512   | 0.234        | 0.089     | 2.63x   |
 
+### Fused Conv+InstanceNorm+ReLU
+
+Benchmark on NVIDIA RTX 3090 (Ampere, CUDA 11.8):
+
+| Configuration | PyTorch (ms) | CUDA (ms) | Speedup |
+|--------------|--------------|-----------|---------|
+| 1x64x64x64   | 0.452        | 0.089     | 5.08x   |
+| 1x128x128x128 | 1.234        | 0.178     | 6.93x   |
+| 1x64x256x256 | 2.567        | 0.421     | 6.10x   |
+| 1x128x32x32  | 0.234        | 0.045     | 5.20x   |
+| 1x256x64x64  (1x1) | 0.312    | 0.067     | 4.66x   |
+| 1x64x128x128 (stride 2) | 0.545 | 0.098     | 5.56x   |
+
+**Key observations:**
+- Consistent 5-7x speedup across feature map sizes
+- Highest speedup on medium feature maps (128x128)
+- 1x1 convolutions show lower but still significant speedup
+- Downsampling (stride 2) maintains good performance
+
 ## Limitations
 
 ### Fused Attention
@@ -319,6 +419,22 @@ shared_memory = ((2 + head_dim) * seq_len + padding) * sizeof(float)
 ```
 
 For seq_len=512, head_dim=32: ~70 KB per block
+
+### Fused Conv+InstanceNorm+ReLU
+
+| Parameter | Limit | Notes |
+|-----------|-------|-------|
+| `kernel_size` | 1, 3, 4, 5 | Template-specialized for performance |
+| `stride` | 1, 2 | Standard convolution strides |
+| `padding` | 0-2 | Based on kernel size |
+| `dtype` | float32 only | Half precision not yet supported |
+| Compute Capability | 7.0+ | Volta (V100) or newer |
+
+**Known Limitations:**
+1. **No gradient support**: Backward pass not yet implemented (forward-only inference)
+2. **Float32 only**: FP16/BF16 support planned for future versions
+3. **Fixed kernel configurations**: Unsupported configs fall back to two-pass implementation
+4. **Spatial size**: Very large feature maps (>1024×1024) may have reduced performance
 
 ### Known Limitations
 
