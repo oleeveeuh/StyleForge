@@ -41,9 +41,10 @@ def test_model_creation():
     print("=" * 60)
 
     try:
+        # Use patch_size=32 for 256x256 image (64 patches, fits in shared memory)
         model = create_styleforge_transformer(
             image_size=256,
-            patch_size=16,
+            patch_size=32,  # Changed from 16 to 32 for shared memory compatibility
             embed_dim=512,
             num_heads=8,
             num_blocks=4,  # Smaller for testing

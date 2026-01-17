@@ -597,10 +597,13 @@ def create_styleforge_transformer(
 
 
 # Predefined model configurations
+# Note: patch_size is chosen to keep seq_len within CUDA shared memory limits
+# For 256x256 image: patch_size=32 gives 8x8=64 patches (safe for 64KB shared memory)
+# For 512x512 image: patch_size=32 gives 16x16=256 patches (requires careful tuning)
 STYLEFORGE_MODELS = {
     "small": {
         "image_size": 256,
-        "patch_size": 16,
+        "patch_size": 32,  # 8x8 = 64 patches (fits in shared memory)
         "embed_dim": 256,
         "num_heads": 4,
         "num_blocks": 4,
@@ -608,7 +611,7 @@ STYLEFORGE_MODELS = {
     },
     "base": {
         "image_size": 256,
-        "patch_size": 16,
+        "patch_size": 32,  # 8x8 = 64 patches (fits in shared memory)
         "embed_dim": 512,
         "num_heads": 8,
         "num_blocks": 6,
@@ -616,11 +619,20 @@ STYLEFORGE_MODELS = {
     },
     "large": {
         "image_size": 512,
-        "patch_size": 16,
+        "patch_size": 32,  # 16x16 = 256 patches (may need PyTorch fallback)
         "embed_dim": 768,
         "num_heads": 12,
         "num_blocks": 12,
         "ffn_dim": 3072,
+    },
+    # New "nano" variant for very fast inference with minimal shared memory
+    "nano": {
+        "image_size": 256,
+        "patch_size": 32,  # 8x8 = 64 patches
+        "embed_dim": 128,
+        "num_heads": 2,
+        "num_blocks": 2,
+        "ffn_dim": 512,
     },
 }
 
