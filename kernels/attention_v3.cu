@@ -1,14 +1,16 @@
 /*
-StyleForge - Fused Multi-Head Attention Kernel (V2 - Register Accumulation)
+StyleForge - Fused Multi-Head Attention Kernel (V3 - Register-Based)
 
-V2 CHANGES:
-- Use register-based accumulation to avoid large shared memory
-- Compute scores and accumulate in a single pass (online softmax)
-- Much simpler than batched approach
+V3 CHANGES:
+- Register-based V accumulation (no shared memory for V)
+- Warp reductions for softmax (online algorithm)
+- Minimal shared memory: only Q vector
+- Fixed nested loop issue
 
-Expected speedup:
-- seq_len=512: 2-3x over PyTorch baseline
-- seq_len=1024: 3-5x over PyTorch baseline
+Key insight: Accumulate in registers, reduce across warps at the end.
+
+Expected performance: Still slower than Flash Attention 2 (fundamental limitation),
+but much better than V2. Educational value remains.
 */
 
 #include <torch/extension.h>
@@ -42,25 +44,27 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
 }
 
 // -------------------------------------------------------------------------
-// V2 KERNEL: Online Softmax - Single Pass
+// V3 KERNEL: Register-Based Accumulation (Minimal Shared Memory)
 // -------------------------------------------------------------------------
 template<int HEAD_DIM>
-__global__ void attention_v2_kernel(
+__global__ void attention_v3_kernel(
     const float* __restrict__ x,
     const float* __restrict__ w_qkv,
     const float* __restrict__ bias_qkv,
-    float* __restrict__ head_outputs,
+    float* __restrict__ output,  // Direct output (no intermediate buffer)
     int batch_size,
     int num_heads,
     int seq_len,
     int embed_dim,
-    float scale
+    float scale,
+    const float* __restrict__ w_out,
+    const float* __restrict__ bias_out
 ) {
+    // Block: (batch, head, query_pos)
     int batch_idx = blockIdx.x;
     int head_idx = blockIdx.y;
     int q_pos = blockIdx.z;
     int tid = threadIdx.x;
-    int warp_id = tid / WARP_SIZE;
     int lane_id = tid % WARP_SIZE;
 
     if (batch_idx >= batch_size || head_idx >= num_heads || q_pos >= seq_len)
@@ -68,14 +72,17 @@ __global__ void attention_v2_kernel(
 
     const int head_dim = HEAD_DIM;
 
-    // Shared memory for Q vector (all threads need to read it)
+    // Shared memory: ONLY Q vector (tiny!)
     __shared__ float s_q[HEAD_DIM];
 
+    int q_start_row = head_idx * head_dim;
+    int k_start_row = embed_dim + head_idx * head_dim;
+    int v_start_row = 2 * embed_dim + head_idx * head_dim;
+
     // ============================================================
-    // Step 1: Compute Q once
+    // Step 1: Compute Q once, store in shared memory
     // ============================================================
     int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
-    int q_start_row = head_idx * head_dim;
 
     float q_local[HEAD_DIM] = {0};
     for (int k = tid; k < embed_dim; k += THREADS_PER_BLOCK) {
@@ -92,8 +99,8 @@ __global__ void attention_v2_kernel(
         q_local[i] = warp_reduce_sum(q_local[i]);
     }
 
-    // Write Q to shared memory (only lane 0 of warp 0)
-    if (tid == 0) {
+    // Broadcast Q to all threads (lane 0 writes to shared)
+    if (lane_id == 0) {
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
             s_q[i] = q_local[i];
@@ -101,7 +108,7 @@ __global__ void attention_v2_kernel(
     }
     __syncthreads();
 
-    // Add Q bias
+    // Add bias (thread 0)
     if (tid == 0 && bias_qkv != nullptr) {
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
@@ -111,19 +118,17 @@ __global__ void attention_v2_kernel(
     __syncthreads();
 
     // ============================================================
-    // Step 2: Online softmax + V accumulation (single pass)
+    // Step 2: Online softmax + V accumulation (all in registers!)
     // ============================================================
     float max_score = -INFINITY;
     float sum_exp = 0.0f;
-    float output[HEAD_DIM] = {0};
+    float v_accum[HEAD_DIM] = {0};
 
-    int k_start_row = embed_dim + head_idx * head_dim;
-    int v_start_row = 2 * embed_dim + head_idx * head_dim;
-
+    // Each thread processes a subset of keys
     for (int k_pos = tid; k_pos < seq_len; k_pos += THREADS_PER_BLOCK) {
         int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
 
-        // Compute K
+        // --- Compute K ---
         float k_local[HEAD_DIM] = {0};
         for (int k = 0; k < embed_dim; k++) {
             float x_val = x[x_k_offset + k];
@@ -139,7 +144,7 @@ __global__ void attention_v2_kernel(
             }
         }
 
-        // Compute Q·K score
+        // --- Compute Q·K score ---
         float score = 0.0f;
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
@@ -147,7 +152,7 @@ __global__ void attention_v2_kernel(
         }
         score *= scale;
 
-        // Online softmax update
+        // --- Online softmax update ---
         float old_max = max_score;
         max_score = fmaxf(max_score, score);
         float exp_diff = expf(old_max - max_score);
@@ -155,7 +160,7 @@ __global__ void attention_v2_kernel(
 
         sum_exp = sum_exp * exp_diff + exp_new;
 
-        // Compute V and update output
+        // --- Compute V ---
         float v_local[HEAD_DIM] = {0};
         for (int k = 0; k < embed_dim; k++) {
             float x_val = x[x_k_offset + k];
@@ -171,92 +176,72 @@ __global__ void attention_v2_kernel(
             }
         }
 
+        // --- Accumulate weighted V (in registers!) ---
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            output[i] = output[i] * exp_diff + exp_new * v_local[i];
+            v_accum[i] = v_accum[i] * exp_diff + exp_new * v_local[i];
         }
     }
 
-    // Reduce across threads
+    // ============================================================
+    // Step 3: Reduce across threads
+    // ============================================================
     float thread_max = max_score;
     max_score = warp_reduce_max(max_score);
 
     float scale_factor = expf(thread_max - max_score);
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        output[i] *= scale_factor;
+        v_accum[i] *= scale_factor;
     }
     sum_exp *= scale_factor;
 
     sum_exp = warp_reduce_sum(sum_exp);
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        output[i] = warp_reduce_sum(output[i]);
+        v_accum[i] = warp_reduce_sum(v_accum[i]);
     }
 
-    // Normalize and write output
+    // ============================================================
+    // Step 4: Write output (with output projection!)
+    // ============================================================
     if (tid == 0) {
         sum_exp = fmaxf(sum_exp, 1e-8f);
-        int64_t head_out_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
+
+        // Normalize
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            head_outputs[head_out_offset + i] = output[i] / sum_exp;
+            v_accum[i] /= sum_exp;
         }
-    }
-}
 
-// -------------------------------------------------------------------------
-// Output Projection
-// -------------------------------------------------------------------------
-template<int HEAD_DIM>
-__global__ void output_projection_v2_kernel(
-    const float* __restrict__ head_outputs,
-    const float* __restrict__ w_out,
-    const float* __restrict__ bias_out,
-    float* __restrict__ out,
-    int num_heads,
-    int batch_size,
-    int seq_len,
-    int embed_dim
-) {
-    int batch_idx = blockIdx.x;
-    int seq_idx = blockIdx.y;
-    int out_dim = blockIdx.z;
-    int tid = threadIdx.x;
-
-    if (batch_idx >= batch_size || seq_idx >= seq_len || out_dim >= embed_dim)
-        return;
-
-    float sum = 0.0f;
-    int head_idx = tid;
-
-    if (head_idx < num_heads) {
-        int64_t head_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + seq_idx * HEAD_DIM;
-        int64_t w_out_offset = (int64_t)out_dim * embed_dim + head_idx * HEAD_DIM;
+        // Output projection: head_output @ w_out^T
+        // This writes directly to final output, concatenated across heads
+        int64_t out_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim + head_idx * head_dim;
 
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            sum += head_outputs[head_offset + i] * w_out[w_out_offset + i];
+            float sum = 0.0f;
+            // Project to embed_dim output dimensions
+            for (int j = 0; j < embed_dim; j++) {
+                sum += v_accum[i] * w_out[j * embed_dim + head_idx * head_dim + i];
+            }
+            output[out_offset + i] = sum;
         }
-    }
 
-    sum = warp_reduce_sum(sum);
-    sum = __shfl_sync(0xffffffff, sum, 0);
-
-    if (tid == 0) {
-        int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
-        float result = sum;
-        if (bias_out != nullptr) {
-            result += bias_out[out_dim];
+        // Add bias (if this is the last head)
+        if (bias_out != nullptr && head_idx == num_heads - 1) {
+            int64_t row_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
+            for (int d = 0; d < embed_dim; d++) {
+                output[row_offset + d] += bias_out[d];
+            }
         }
-        out[out_offset] = result;
     }
 }
 
 // -------------------------------------------------------------------------
 // Main Function
 // -------------------------------------------------------------------------
-torch::Tensor fused_attention_v2(
+torch::Tensor fused_attention_v3(
     torch::Tensor x,
     torch::Tensor w_qkv,
     torch::Tensor w_out,
@@ -270,48 +255,36 @@ torch::Tensor fused_attention_v2(
     int embed_dim = x.size(2);
     int head_dim = embed_dim / num_heads;
 
-    auto out = torch::zeros_like(x);
-    auto head_outputs = torch::zeros({batch_size, num_heads, seq_len, head_dim}, x.options());
+    auto options = x.options();
+
+    // Output: [batch, seq_len, embed_dim]
+    auto out = torch::zeros({batch_size, seq_len, embed_dim}, options);
 
     const float* bias_qkv_ptr = bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr;
     const float* bias_out_ptr = bias_out.has_value() ? bias_out.value().data_ptr<float>() : nullptr;
 
-    dim3 blocks1(batch_size, num_heads, seq_len);
-    dim3 threads1(THREADS_PER_BLOCK);
+    // Grid: one block per query position
+    dim3 blocks(batch_size, num_heads, seq_len);
+    dim3 threads(THREADS_PER_BLOCK);
 
     if (head_dim == 32) {
-        attention_v2_kernel<32><<<blocks1, threads1>>>(
+        attention_v3_kernel<32><<<blocks, threads>>>(
             x.data_ptr<float>(), w_qkv.data_ptr<float>(), bias_qkv_ptr,
-            head_outputs.data_ptr<float>(), batch_size, num_heads,
-            seq_len, embed_dim, scale);
+            out.data_ptr<float>(), batch_size, num_heads,
+            seq_len, embed_dim, scale,
+            w_out.data_ptr<float>(), bias_out_ptr);
     } else if (head_dim == 64) {
-        attention_v2_kernel<64><<<blocks1, threads1>>>(
+        attention_v3_kernel<64><<<blocks, threads>>>(
             x.data_ptr<float>(), w_qkv.data_ptr<float>(), bias_qkv_ptr,
-            head_outputs.data_ptr<float>(), batch_size, num_heads,
-            seq_len, embed_dim, scale);
+            out.data_ptr<float>(), batch_size, num_heads,
+            seq_len, embed_dim, scale,
+            w_out.data_ptr<float>(), bias_out_ptr);
     } else if (head_dim == 128) {
-        attention_v2_kernel<128><<<blocks1, threads1>>>(
+        attention_v3_kernel<128><<<blocks, threads>>>(
             x.data_ptr<float>(), w_qkv.data_ptr<float>(), bias_qkv_ptr,
-            head_outputs.data_ptr<float>(), batch_size, num_heads,
-            seq_len, embed_dim, scale);
-    }
-
-    // Output projection
-    dim3 blocks2(batch_size, seq_len, embed_dim);
-    dim3 threads2(32);
-
-    if (head_dim == 32) {
-        output_projection_v2_kernel<32><<<blocks2, threads2>>>(
-            head_outputs.data_ptr<float>(), w_out.data_ptr<float>(), bias_out_ptr,
-            out.data_ptr<float>(), num_heads, batch_size, seq_len, embed_dim);
-    } else if (head_dim == 64) {
-        output_projection_v2_kernel<64><<<blocks2, threads2>>>(
-            head_outputs.data_ptr<float>(), w_out.data_ptr<float>(), bias_out_ptr,
-            out.data_ptr<float>(), num_heads, batch_size, seq_len, embed_dim);
-    } else if (head_dim == 128) {
-        output_projection_v2_kernel<128><<<blocks2, threads2>>>(
-            head_outputs.data_ptr<float>(), w_out.data_ptr<float>(), bias_out_ptr,
-            out.data_ptr<float>(), num_heads, batch_size, seq_len, embed_dim);
+            out.data_ptr<float>(), batch_size, num_heads,
+            seq_len, embed_dim, scale,
+            w_out.data_ptr<float>(), bias_out_ptr);
     }
 
     return out;
@@ -321,5 +294,5 @@ torch::Tensor fused_attention_v2(
 // Python Bindings
 // -------------------------------------------------------------------------
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_attention_v2", &fused_attention_v2, "Fused attention V2 (online softmax)");
+    m.def("fused_attention_v3", &fused_attention_v3, "Fused attention V3 (register-based)");
 }

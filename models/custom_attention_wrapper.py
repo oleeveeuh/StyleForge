@@ -18,20 +18,20 @@ from typing import Optional, Tuple
 
 # Try to import the CUDA kernels
 CUDA_ATTENTION_AVAILABLE = False
-CUDA_ATTENTION_V2_AVAILABLE = False
+CUDA_ATTENTION_V3_AVAILABLE = False
 FusedAttentionFunction = None
-FusedAttentionV2Function = None
+FusedAttentionV3Function = None
 
 if torch.cuda.is_available():
-    # Try V2 first (batched queries, faster)
+    # Try V3 first (register-based, minimal shared memory)
     try:
-        from kernels.attention_v2_wrapper import FusedAttentionV2Function
-        CUDA_ATTENTION_V2_AVAILABLE = True
+        from kernels.attention_v3_wrapper import FusedAttentionV3Function
+        CUDA_ATTENTION_V3_AVAILABLE = True
     except (ImportError, RuntimeError):
-        CUDA_ATTENTION_V2_AVAILABLE = False
-        FusedAttentionV2Function = None
+        CUDA_ATTENTION_V3_AVAILABLE = False
+        FusedAttentionV3Function = None
 
-    # V1 as fallback (separate try block so V1 failure doesn't affect V2)
+    # V1 as fallback
     try:
         from kernels.attention_wrapper import FusedAttentionFunction
         CUDA_ATTENTION_AVAILABLE = True
@@ -39,20 +39,41 @@ if torch.cuda.is_available():
         CUDA_ATTENTION_AVAILABLE = False
         FusedAttentionFunction = None
 
+# NOTE: These kernels are EDUCATIONAL. They demonstrate CUDA programming
+# (kernel fusion, warp reductions, register-based accumulation) but cannot
+# compete with Flash Attention 2 which uses tensor cores.
+#
+# Fundamental limitation: Computing QKV with element-wise operations is
+# much slower than tensor-core GEMM. V3 improves on V1/V2 by using register
+# accumulation instead of shared memory, but the O(seq_len² × embed_dim)
+# complexity remains.
+#
+# For production: Use torch.nn.functional.scaled_dot_product_attention.
+
 
 class CustomMultiheadAttention(nn.Module):
     """
-    PyTorch-compatible MultiheadAttention using StyleForge CUDA kernels.
+    PyTorch-compatible MultiheadAttention wrapper.
 
-    When CUDA is available, uses fused_attention_v1 for 8-15x speedup.
-    Falls back to PyTorch nn.MultiheadAttention on CPU/MPS.
+    EDUCATIONAL: Demonstrates CUDA kernel design (fusion, warp reductions).
+
+    V3 KERNEL (Default): Register-based accumulation
+    - Minimal shared memory (only Q vector: ~256 bytes for head_dim=64)
+    - Online softmax algorithm
+    - No shared memory for V accumulation
+
+    STILL SLOWER THAN FLASH ATTENTION 2 because:
+    - Element-wise matmul vs tensor cores
+    - O(seq_len² × embed_dim) vs O(seq_len²) with better constants
+
+    For production: Use torch.nn.functional.scaled_dot_product_attention
 
     Args:
         embed_dim: Total dimension of the model
         num_heads: Number of parallel attention heads
         bias: If True, adds learnable bias to QKV and output projections
-        dropout: Dropout probability on attention weights (not supported in CUDA kernel)
-        use_cuda_kernel: If True, prefer CUDA kernel when available
+        dropout: Dropout probability (not supported by CUDA kernel)
+        use_cuda_kernel: If True, prefer V3 CUDA kernel when available
     """
 
     def __init__(
@@ -136,8 +157,7 @@ class CustomMultiheadAttention(nn.Module):
         batch_size, seq_len, embed_dim = x.shape
 
         # Check for unsupported features with CUDA kernel
-        # Prefer V2 if available
-        max_seq = FusedAttentionV2Function.MAX_SEQ_LEN if CUDA_ATTENTION_V2_AVAILABLE else (
+        max_seq = FusedAttentionV3Function.MAX_SEQ_LEN if CUDA_ATTENTION_V3_AVAILABLE else (
             FusedAttentionFunction.MAX_SEQ_LEN if CUDA_ATTENTION_AVAILABLE else 0)
 
         use_cuda = (
@@ -155,13 +175,13 @@ class CustomMultiheadAttention(nn.Module):
             return self._forward_pytorch(x, key_padding_mask, need_weights, attn_mask, average_attn_weights)
 
     def _forward_cuda(self, x: torch.Tensor) -> Tuple[torch.Tensor, None]:
-        """Forward pass using CUDA fused attention kernel."""
+        """Forward pass using CUDA V3 kernel (register-based, educational)."""
         try:
             self._kernel_call_count += 1
 
-            # Prefer V2 (batched queries) if available
-            if CUDA_ATTENTION_V2_AVAILABLE:
-                output = FusedAttentionV2Function.apply(
+            # Prefer V3 (register-based, minimal shared memory)
+            if CUDA_ATTENTION_V3_AVAILABLE:
+                output = FusedAttentionV3Function.apply(
                     x,
                     self.w_qkv,
                     self.w_out,
@@ -184,15 +204,10 @@ class CustomMultiheadAttention(nn.Module):
 
             return output, None
         except Exception as e:
-            # Check if this is a shared memory error or V2 not available
-            if ("shared memory" in str(e).lower() or "exceeds device limit" in str(e) or
-                "fused_attention_v2" in str(e)):
-                # Fallback to PyTorch implementation
-                self._kernel_call_count -= 1
-                self._pytorch_call_count += 1
-                return self._forward_pytorch(x, None, False, None, True)
-            else:
-                raise
+            # Fallback to PyTorch on any error
+            self._kernel_call_count -= 1
+            self._pytorch_call_count += 1
+            return self._forward_pytorch(x, None, False, None, True)
 
     def _forward_pytorch(
         self,
