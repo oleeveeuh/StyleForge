@@ -140,8 +140,12 @@ with torch.no_grad():
     # Copy in_proj_weight
     mha.in_proj_weight.copy_(w_qkv)
     mha.in_proj_bias.copy_(bias_qkv)
-    # Copy out_proj weights (note: PyTorch stores as [out_features, in_features])
-    mha.out_proj.weight.copy_(w_out.T)
+    # Copy out_proj weights
+    # Our kernel computes: output = concat_heads @ w_out^T
+    # PyTorch's F.linear computes: output = input @ weight^T
+    # So to match, we set: PyTorch's weight = our w_out (NOT w_out.T)
+    # Then PyTorch computes: concat @ w_out^T which matches our kernel
+    mha.out_proj.weight.copy_(w_out)  # FIXED: was w_out.T
     mha.out_proj.bias.copy_(bias_out)
 
 with torch.no_grad():

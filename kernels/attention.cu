@@ -411,6 +411,10 @@ __global__ void attention_per_head_kernel(
     int embed_dim,
     float scale
 ) {
+    // MARKER: Print at kernel start to verify compilation
+    if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n*** ATTENTION_KERNEL_START: HEAD_DIM=%d ***\n", HEAD_DIM);
+    }
     // -------------------------------------------------------------------------
     // EXTERN DYNAMIC SHARED MEMORY (OPTIMIZED LAYOUT)
     // -------------------------------------------------------------------------
