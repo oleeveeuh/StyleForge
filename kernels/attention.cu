@@ -761,9 +761,26 @@ __global__ void output_projection_kernel(
 
     // Compute partial dot product: head_out[:head_dim] @ w_out[out_dim, head_idx*head_dim : (head_idx+1)*head_dim]
     float partial_sum = 0.0f;
+
+    // DEBUG: Print values for first batch, first seq, first out_dim to debug
+    if (batch_idx == 0 && seq_idx == 0 && out_dim == 0) {
+        printf("output_proj: batch=%d seq=%d out_dim=%d head=%d HEAD_DIM=%d\n",
+               batch_idx, seq_idx, out_dim, head_idx, HEAD_DIM);
+        printf("  head_offset=%lld, w_out_offset=%lld\n", head_offset, w_out_offset);
+        // Print first few values
+        for (int i = 0; i < 3 && i < HEAD_DIM; i++) {
+            printf("  head_ptr[%d]=%.6f, w_out_ptr[%d]=%.6f\n",
+                   i, head_ptr[i], i, w_out_ptr[i]);
+        }
+    }
+
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
         partial_sum += head_ptr[i] * w_out_ptr[i];
+    }
+
+    if (batch_idx == 0 && seq_idx == 0 && out_dim == 0) {
+        printf("  partial_sum (before reduction)=%.6f\n", partial_sum);
     }
 
     // Lane 0 writes the result (plus bias if provided)
@@ -790,6 +807,12 @@ __global__ void output_projection_kernel(
             if (bias_out != nullptr) {
                 result += bias_out[out_dim];
             }
+
+            // DEBUG: Print final result for first output
+            if (batch_idx == 0 && seq_idx == 0 && out_dim == 0) {
+                printf("  result (after reduction)=%.6f, out_offset=%lld\n", result, out_offset);
+            }
+
             out[out_offset] = result;
         }
     } else {
