@@ -122,8 +122,8 @@ try:
         attn_pt.in_proj_weight.copy_(w_qkv)
         # PyTorch's Linear computes x @ weight.T
         # Our kernel computes x @ w_out.T
-        # So we pass the SAME w_out to both for them to match
-        attn_pt.out_proj.weight.copy_(w_out)
+        # PyTorch expects transposed weights for Linear layers
+        attn_pt.out_proj.weight.copy_(w_out.T)
         out_pt, _ = attn_pt(x, x, x)
 
     diff = (output - out_pt).abs()

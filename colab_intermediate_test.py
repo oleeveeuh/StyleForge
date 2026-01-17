@@ -82,7 +82,7 @@ try:
 
     with torch.no_grad():
         attn_pt.in_proj_weight.copy_(w_qkv)
-        attn_pt.out_proj.weight.copy_(w_out)
+        attn_pt.out_proj.weight.copy_(w_out.T)  # PyTorch expects transposed
 
         # Get Q, K, V projections
         # PyTorch's in_proj_weight is [3*embed_dim, embed_dim]

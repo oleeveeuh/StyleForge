@@ -78,7 +78,7 @@ try:
 
     with torch.no_grad():
         attn_pt.in_proj_weight.copy_(w_qkv)
-        attn_pt.out_proj.weight.copy_(w_out)
+        attn_pt.out_proj.weight.copy_(w_out.T)  # PyTorch expects transposed
         out_pt, _ = attn_pt(x, x, x)
 
     diff = (output - out_pt).abs()
