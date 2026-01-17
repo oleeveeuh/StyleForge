@@ -12,13 +12,6 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    from kernels.attention_wrapper import FusedAttention
-except ImportError:
-    print("Error: Could not import FusedAttention. Make sure the kernel is compiled.")
-    print("Run: python setup.py install")
-    sys.exit(1)
-
 print("=" * 80)
 print("CUDA Kernel Debug Test")
 print("=" * 80)
@@ -59,23 +52,48 @@ print(f"\n" + "=" * 80)
 print("Running CUDA kernel with debug prints...")
 print("=" * 80)
 
-# Import the low-level fused_attention function
+# Import the FusedAttention module which wraps the CUDA kernel
 try:
-    from styleforge import fused_attention_v1
-except ImportError:
-    try:
-        from kernels.attention_wrapper import fused_attention_v1
-    except ImportError:
-        print("Error: Could not import fused_attention_v1")
-        sys.exit(1)
+    from kernels.attention_wrapper import FusedAttention, get_attention_module
+except ImportError as e:
+    print(f"Error importing FusedAttention: {e}")
+    print("\nPlease make sure the CUDA extension is compiled:")
+    print("  python setup.py install")
+    print("  or: python -m build")
+    sys.exit(1)
+
+# Get the low-level module for direct access
+try:
+    _module = get_attention_module()
+    fused_attention_v1 = _module.fused_attention_v1
+    print("\nUsing low-level fused_attention_v1 function")
+except:
+    print("\nFalling back to FusedAttention module...")
+    # Use the wrapper module instead
+    fused_attention_v1 = None
 
 # Run the kernel
 with torch.no_grad():
-    output_cuda = fused_attention_v1(
-        x, w_qkv, w_out,
-        bias_qkv, bias_out,
-        scale, num_heads
-    )
+    if fused_attention_v1 is not None:
+        # Direct call to low-level function
+        output_cuda = fused_attention_v1(
+            x, w_qkv, w_out,
+            bias_qkv, bias_out,
+            scale, num_heads
+        )
+    else:
+        # Use the FusedAttention module
+        attn = FusedAttention(embed_dim, num_heads).cuda()
+        # Copy weights to the module
+        with torch.no_grad():
+            attn.w_qkv.copy_(w_qkv)
+            attn.w_out.copy_(w_out)
+            if attn.bias_qkv is not None:
+                attn.bias_qkv.copy_(bias_qkv)
+            if attn.bias_out is not None:
+                attn.bias_out.copy_(bias_out)
+
+        output_cuda = attn(x)
 
 print("\n" + "=" * 80)
 print("CUDA kernel completed")
@@ -120,3 +138,4 @@ if diff.max().item() < 1e-4:
     print("\n✓ PASS: Output matches PyTorch within tolerance")
 else:
     print("\n✗ FAIL: Output differs from PyTorch")
+    print("\nCheck the debug output above to find where the computation diverges.")
