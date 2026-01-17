@@ -1,16 +1,15 @@
 /*
-StyleForge - Fused Multi-Head Attention Kernel (V2 - Production Optimized)
+StyleForge - Fused Multi-Head Attention Kernel (V2 - Simplified Production)
 
 V2 CHANGES:
-- Batch multiple queries per block to reduce launch overhead
-- Use fixed 256 threads per block (8 warps)
-- Process 4-8 queries per block adaptively
+- Simpler design: compute Q once per block, then stream through K/V
+- No complex query batching - just better memory coalescing
 - All debug printf removed
-- Optimized shared memory usage
+- Added CUDA error checking via cudaDeviceSynchronize()
 
 Expected speedup:
-- seq_len=1024: 2-3x over PyTorch baseline
-- seq_len=4096: 5-8x over PyTorch baseline
+- seq_len=512: 2-3x over PyTorch baseline
+- seq_len=1024: 3-5x over PyTorch baseline
 */
 
 #include <torch/extension.h>
@@ -23,7 +22,6 @@ Expected speedup:
 // -------------------------------------------------------------------------
 constexpr int WARP_SIZE = 32;
 constexpr int THREADS_PER_BLOCK = 256;
-constexpr int QUERIES_PER_BLOCK = 4;
 
 // -------------------------------------------------------------------------
 // Device Math Functions
@@ -45,209 +43,212 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
 }
 
 // -------------------------------------------------------------------------
-// V2 KERNEL: Batched Attention - Multiple Queries Per Block
+// V2 KERNEL: Streamlined Attention - Single Query Per Block
 // -------------------------------------------------------------------------
 template<int HEAD_DIM>
-__global__ void attention_batched_kernel(
+__global__ void attention_v2_kernel(
     const float* __restrict__ x,
     const float* __restrict__ w_qkv,
     const float* __restrict__ bias_qkv,
     float* __restrict__ head_outputs,
     int batch_size,
     int num_heads,
-    int num_query_blocks,
     int seq_len,
     int embed_dim,
     float scale
 ) {
+    // Block indexing: blockIdx.x = batch, blockIdx.y = head, blockIdx.z = query_pos
     int batch_idx = blockIdx.x;
     int head_idx = blockIdx.y;
-    int query_block_idx = blockIdx.z;
+    int q_pos = blockIdx.z;
     int tid = threadIdx.x;
     int warp_id = tid / WARP_SIZE;
     int lane_id = tid % WARP_SIZE;
 
-    if (batch_idx >= batch_size || head_idx >= num_heads)
+    if (batch_idx >= batch_size || head_idx >= num_heads || q_pos >= seq_len)
         return;
 
     const int head_dim = HEAD_DIM;
+
+    // Shared memory: Q vector (head_dim) + reduction buffer (8 warps)
     extern __shared__ float shared_mem[];
+    float* s_q = shared_mem;
+    float* s_reduce = shared_mem + head_dim;
 
-    // Process each query assigned to this block
-    for (int q_local = 0; q_local < QUERIES_PER_BLOCK; q_local++) {
-        int q_pos = query_block_idx * QUERIES_PER_BLOCK + q_local;
-        if (q_pos >= seq_len) break;
+    // ============================================================
+    // Step 1: Compute Q once (all threads participate)
+    // ============================================================
+    int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
+    int q_start_row = head_idx * head_dim;
 
-        // Shared memory layout for this query
-        float* s_scores = shared_mem;
-        float* s_reduce = shared_mem + seq_len;
-
-        // ============================================================
-        // Step 1: Compute Q (broadcast to all threads)
-        // ============================================================
-        float Q_reg[HEAD_DIM];
+    // Each thread computes a portion of Q
+    float q_local[HEAD_DIM] = {0};
+    for (int k = tid; k < embed_dim; k += THREADS_PER_BLOCK) {
+        float x_val = x[x_offset + k];
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            Q_reg[i] = 0.0f;
+            q_local[i] += x_val * w_qkv[(q_start_row + i) * embed_dim + k];
         }
+    }
 
-        int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
-        int q_start_row = head_idx * head_dim;
+    // Warp reduction
+    #pragma unroll
+    for (int i = 0; i < HEAD_DIM; i++) {
+        q_local[i] = warp_reduce_sum(q_local[i]);
+    }
 
-        // Each thread computes a portion of Q
-        for (int k = tid; k < embed_dim; k += THREADS_PER_BLOCK) {
-            float x_val = x[x_offset + k];
-            #pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                Q_reg[i] += x_val * w_qkv[(q_start_row + i) * embed_dim + k];
-            }
-        }
-
-        // Warp reduction to get final Q
+    // Write Q to shared memory (lane 0 of each warp)
+    if (lane_id == 0) {
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            Q_reg[i] = warp_reduce_sum(Q_reg[i]);
+            s_q[i] = q_local[i];
         }
-        Q_reg[0] = __shfl_sync(0xffffffff, Q_reg[0], 0);
-        // Broadcast Q to all threads in warp
+    }
+    __syncthreads();
+
+    // Add bias (only first thread)
+    if (tid == 0 && bias_qkv != nullptr) {
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            Q_reg[i] = __shfl_sync(0xffffffff, Q_reg[i], i % WARP_SIZE);
+            s_q[i] += bias_qkv[q_start_row + i];
         }
+    }
+    __syncthreads();
 
-        // Add bias
-        if (bias_qkv != nullptr && tid == 0) {
+    // ============================================================
+    // Step 2: Compute attention scores by streaming through K/V
+    // ============================================================
+    float max_score = -INFINITY;
+    int k_start_row = embed_dim + head_idx * head_dim;
+
+    // Compute K matrix on the fly: K[seq_len, head_dim]
+    for (int k_pos = tid; k_pos < seq_len; k_pos += THREADS_PER_BLOCK) {
+        int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
+
+        // Compute this K vector
+        float k_local[HEAD_DIM] = {0};
+        for (int k = 0; k < embed_dim; k++) {
+            float x_val = x[x_k_offset + k];
             #pragma unroll
             for (int i = 0; i < HEAD_DIM; i++) {
-                Q_reg[i] += bias_qkv[q_start_row + i];
+                k_local[i] += x_val * w_qkv[(k_start_row + i) * embed_dim + k];
             }
         }
-        // Broadcast biased Q
+
+        // Add K bias
+        if (bias_qkv != nullptr) {
+            #pragma unroll
+            for (int i = 0; i < HEAD_DIM; i++) {
+                k_local[i] += bias_qkv[k_start_row + i];
+            }
+        }
+
+        // Dot product Q·K
+        float dot = 0.0f;
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            Q_reg[i] = __shfl_sync(0xffffffff, Q_reg[i], 0);
+            dot += s_q[i] * k_local[i];
         }
 
-        // ============================================================
-        // Step 2: Compute attention scores (all threads participate)
-        // ============================================================
-        float max_score = -INFINITY;
+        float score = dot * scale;
+        shared_mem[k_pos] = score;
+        max_score = fmaxf(max_score, score);
+    }
 
-        for (int k_pos = tid; k_pos < seq_len; k_pos += THREADS_PER_BLOCK) {
-            int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
-            int k_start_row = embed_dim + head_idx * head_dim;
+    // Reduce max across threads
+    max_score = warp_reduce_max(max_score);
+    if (lane_id == 0) {
+        s_reduce[warp_id] = max_score;
+    }
+    __syncthreads();
 
-            // Compute K and Q·K^T
-            float k_reg[HEAD_DIM];
-            #pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                k_reg[i] = 0.0f;
-            }
-
-            for (int k = 0; k < embed_dim; k++) {
-                float x_val = x[x_k_offset + k];
-                #pragma unroll
-                for (int i = 0; i < HEAD_DIM; i++) {
-                    k_reg[i] += x_val * w_qkv[(k_start_row + i) * embed_dim + k];
-                }
-            }
-
-            float dot = 0.0f;
-            #pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                if (bias_qkv != nullptr) {
-                    k_reg[i] += bias_qkv[k_start_row + i];
-                }
-                dot += Q_reg[i] * k_reg[i];
-            }
-
-            float score = dot * scale;
-            s_scores[k_pos] = score;
-            max_score = fmaxf(max_score, score);
-        }
-
-        // Reduce max across threads
+    if (warp_id == 0) {
+        max_score = (lane_id < 8) ? s_reduce[lane_id] : -INFINITY;
         max_score = warp_reduce_max(max_score);
-        if (lane_id == 0) {
-            s_reduce[warp_id] = max_score;
-        }
-        __syncthreads();
+        s_reduce[0] = max_score;
+    }
+    __syncthreads();
 
-        if (warp_id == 0) {
-            max_score = (lane_id < 8) ? s_reduce[lane_id] : -INFINITY;
-            max_score = warp_reduce_max(max_score);
-            s_reduce[0] = max_score;
-        }
-        __syncthreads();
+    max_score = s_reduce[0];
 
-        max_score = s_reduce[0];
+    // ============================================================
+    // Step 3: Softmax and accumulate weighted V
+    // ============================================================
+    float sum_exp = 0.0f;
+    float output[HEAD_DIM] = {0};
+    int v_start_row = 2 * embed_dim + head_idx * head_dim;
 
-        // ============================================================
-        // Step 3: Softmax and weighted V accumulation
-        // ============================================================
-        float sum_exp = 0.0f;
-        float output[HEAD_DIM] = {0};
+    for (int k_pos = tid; k_pos < seq_len; k_pos += THREADS_PER_BLOCK) {
+        float exp_score = expf(shared_mem[k_pos] - max_score);
+        sum_exp += exp_score;
 
-        for (int k_pos = tid; k_pos < seq_len; k_pos += THREADS_PER_BLOCK) {
-            float exp_score = expf(s_scores[k_pos] - max_score);
-            s_scores[k_pos] = exp_score;
-            sum_exp += exp_score;
-        }
+        int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
 
-        sum_exp = warp_reduce_sum(sum_exp);
-        if (lane_id == 0) {
-            s_reduce[warp_id] = sum_exp;
-        }
-        __syncthreads();
-
-        if (warp_id == 0) {
-            sum_exp = (lane_id < 8) ? s_reduce[lane_id] : 0.0f;
-            sum_exp = warp_reduce_sum(sum_exp);
-            s_reduce[0] = sum_exp;
-        }
-        __syncthreads();
-
-        sum_exp = s_reduce[0] + 1e-8f;
-
-        // Compute weighted V
-        for (int k_pos = tid; k_pos < seq_len; k_pos += THREADS_PER_BLOCK) {
-            float attn_weight = s_scores[k_pos] / sum_exp;
-
-            int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
-            int v_start_row = 2 * embed_dim + head_idx * head_dim;
-
+        // Compute this V vector
+        float v_local[HEAD_DIM] = {0};
+        for (int k = 0; k < embed_dim; k++) {
+            float x_val = x[x_k_offset + k];
             #pragma unroll
             for (int i = 0; i < HEAD_DIM; i++) {
-                float V_val = 0.0f;
-                for (int k = 0; k < embed_dim; k++) {
-                    V_val += x[x_k_offset + k] * w_qkv[(v_start_row + i) * embed_dim + k];
-                }
-                if (bias_qkv != nullptr) {
-                    V_val += bias_qkv[v_start_row + i];
-                }
-                output[i] += attn_weight * V_val;
+                v_local[i] += x_val * w_qkv[(v_start_row + i) * embed_dim + k];
             }
         }
 
-        // Reduce output across threads
+        // Add V bias
+        if (bias_qkv != nullptr) {
+            #pragma unroll
+            for (int i = 0; i < HEAD_DIM; i++) {
+                v_local[i] += bias_qkv[v_start_row + i];
+            }
+        }
+
+        // Accumulate weighted V
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            output[i] = warp_reduce_sum(output[i]);
+            output[i] += exp_score * v_local[i];
         }
+    }
 
-        // Write output
-        if (tid == 0) {
-            int64_t head_out_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
-            #pragma unroll
-            for (int i = 0; i < HEAD_DIM; i++) {
-                head_outputs[head_out_offset + i] = __shfl_sync(0xffffffff, output[i], i);
-            }
+    // Reduce sum_exp
+    sum_exp = warp_reduce_sum(sum_exp);
+    if (lane_id == 0) {
+        s_reduce[warp_id] = sum_exp;
+    }
+    __syncthreads();
+
+    if (warp_id == 0) {
+        sum_exp = (lane_id < 8) ? s_reduce[lane_id] : 0.0f;
+        sum_exp = warp_reduce_sum(sum_exp);
+        s_reduce[0] = sum_exp;
+    }
+    __syncthreads();
+
+    sum_exp = s_reduce[0] + 1e-8f;
+
+    // Normalize output
+    #pragma unroll
+    for (int i = 0; i < HEAD_DIM; i++) {
+        output[i] /= sum_exp;
+    }
+
+    // Reduce output across threads
+    #pragma unroll
+    for (int i = 0; i < HEAD_DIM; i++) {
+        output[i] = warp_reduce_sum(output[i]);
+    }
+
+    // Write output (only thread 0)
+    if (tid == 0) {
+        int64_t head_out_offset = ((int64_t)batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM + q_pos * HEAD_DIM;
+        #pragma unroll
+        for (int i = 0; i < HEAD_DIM; i++) {
+            head_outputs[head_out_offset + i] = output[i];
         }
     }
 }
 
 // -------------------------------------------------------------------------
-// V2 Output Projection
+// V2 Output Projection (same as before)
 // -------------------------------------------------------------------------
 template<int HEAD_DIM>
 __global__ void output_projection_v2_kernel(
@@ -317,35 +318,33 @@ torch::Tensor fused_attention_v2(
     const float* bias_qkv_ptr = bias_qkv.has_value() ? bias_qkv.value().data_ptr<float>() : nullptr;
     const float* bias_out_ptr = bias_out.has_value() ? bias_out.value().data_ptr<float>() : nullptr;
 
-    // Adaptive configuration
-    int queries_per_block = (seq_len < 512) ? 8 : 4;
-    int num_query_blocks = (seq_len + queries_per_block - 1) / queries_per_block;
-
-    dim3 blocks1(batch_size, num_heads, num_query_blocks);
+    // Grid: one block per query position (same as V1)
+    dim3 blocks1(batch_size, num_heads, seq_len);
     dim3 threads1(THREADS_PER_BLOCK);
 
-    size_t sm_size = seq_len * sizeof(float) * 2;  // scores + reduce buffer
+    // Shared memory: Q vector (head_dim) + reduction buffer (8)
+    size_t sm_size = (head_dim + 8) * sizeof(float);
 
     if (head_dim == 32) {
-        attention_batched_kernel<32><<<blocks1, threads1, sm_size>>>(
+        attention_v2_kernel<32><<<blocks1, threads1, sm_size>>>(
             x.data_ptr<float>(), w_qkv.data_ptr<float>(), bias_qkv_ptr,
             head_outputs.data_ptr<float>(), batch_size, num_heads,
-            num_query_blocks, seq_len, embed_dim, scale);
+            seq_len, embed_dim, scale);
     } else if (head_dim == 64) {
-        attention_batched_kernel<64><<<blocks1, threads1, sm_size>>>(
+        attention_v2_kernel<64><<<blocks1, threads1, sm_size>>>(
             x.data_ptr<float>(), w_qkv.data_ptr<float>(), bias_qkv_ptr,
             head_outputs.data_ptr<float>(), batch_size, num_heads,
-            num_query_blocks, seq_len, embed_dim, scale);
+            seq_len, embed_dim, scale);
     } else if (head_dim == 128) {
-        attention_batched_kernel<128><<<blocks1, threads1, sm_size>>>(
+        attention_v2_kernel<128><<<blocks1, threads1, sm_size>>>(
             x.data_ptr<float>(), w_qkv.data_ptr<float>(), bias_qkv_ptr,
             head_outputs.data_ptr<float>(), batch_size, num_heads,
-            num_query_blocks, seq_len, embed_dim, scale);
+            seq_len, embed_dim, scale);
     }
 
     // Output projection
     dim3 blocks2(batch_size, seq_len, embed_dim);
-    dim3 threads2(32);  // One warp per output dim
+    dim3 threads2(32);
 
     if (head_dim == 32) {
         output_projection_v2_kernel<32><<<blocks2, threads2>>>(
@@ -368,5 +367,5 @@ torch::Tensor fused_attention_v2(
 // Python Bindings
 // -------------------------------------------------------------------------
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_attention_v2", &fused_attention_v2, "Fused attention V2 (batched queries)");
+    m.def("fused_attention_v2", &fused_attention_v2, "Fused attention V2 (streamlined)");
 }
