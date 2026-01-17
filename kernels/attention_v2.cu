@@ -368,6 +368,5 @@ torch::Tensor fused_attention_v2(
 // Python Bindings
 // -------------------------------------------------------------------------
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_attention_v1", &fused_attention_v1, "Fused attention V1");
     m.def("fused_attention_v2", &fused_attention_v2, "Fused attention V2 (batched queries)");
 }

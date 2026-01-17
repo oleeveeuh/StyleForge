@@ -5,6 +5,7 @@ V2 uses batched queries per block for better performance.
 """
 
 import torch
+import torch.nn as nn
 from pathlib import Path
 from typing import Optional
 
@@ -55,14 +56,10 @@ class FusedAttentionV2Function(torch.autograd.Function):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available")
         
-        int64_t batch_size = x.size(0)
-        int64_t seq_len = x.size(1)
-        int64_t embed_dim = x.size(2)
-        int64_t head_dim = embed_dim // num_heads
-        
-        TORCH_CHECK(x.dtype == torch.kFloat32, "Input must be float32")
-        TORCH_CHECK(w_qkv.dtype == torch.kFloat32, "w_qkv must be float32")
-        TORCH_CHECK(w_out.dtype == torch.kFloat32, "w_out must be float32")
+        batch_size = x.size(0)
+        seq_len = x.size(1)
+        embed_dim = x.size(2)
+        head_dim = embed_dim // num_heads
         
         if seq_len > FusedAttentionV2Function.MAX_SEQ_LEN:
             raise ValueError(f"seq_len {seq_len} exceeds MAX_SEQ_LEN {FusedAttentionV2Function.MAX_SEQ_LEN}")
@@ -72,6 +69,7 @@ class FusedAttentionV2Function(torch.autograd.Function):
         ctx.save_for_backward(x, w_qkv, w_out, bias_qkv, bias_out)
         ctx.num_heads = num_heads
         ctx.scale = scale
+        ctx.embed_dim = embed_dim
         
         output = module.fused_attention_v2(
             x.contiguous(),

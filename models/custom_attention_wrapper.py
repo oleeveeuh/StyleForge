@@ -17,30 +17,27 @@ import torch.nn as nn
 from typing import Optional, Tuple
 
 # Try to import the CUDA kernels
-try:
-    if torch.cuda.is_available():
-        # Try V2 first (batched queries, faster)
-        try:
-            from kernels.attention_v2_wrapper import FusedAttentionV2Function
-            CUDA_ATTENTION_V2_AVAILABLE = True
-            FusedAttentionV2Function = FusedAttentionV2Function
-        except (ImportError, RuntimeError):
-            CUDA_ATTENTION_V2_AVAILABLE = False
-            FusedAttentionV2Function = None
+CUDA_ATTENTION_AVAILABLE = False
+CUDA_ATTENTION_V2_AVAILABLE = False
+FusedAttentionFunction = None
+FusedAttentionV2Function = None
 
-        # V1 as fallback
+if torch.cuda.is_available():
+    # Try V2 first (batched queries, faster)
+    try:
+        from kernels.attention_v2_wrapper import FusedAttentionV2Function
+        CUDA_ATTENTION_V2_AVAILABLE = True
+    except (ImportError, RuntimeError):
+        CUDA_ATTENTION_V2_AVAILABLE = False
+        FusedAttentionV2Function = None
+
+    # V1 as fallback (separate try block so V1 failure doesn't affect V2)
+    try:
         from kernels.attention_wrapper import FusedAttentionFunction
         CUDA_ATTENTION_AVAILABLE = True
-    else:
+    except (ImportError, RuntimeError):
         CUDA_ATTENTION_AVAILABLE = False
-        CUDA_ATTENTION_V2_AVAILABLE = False
         FusedAttentionFunction = None
-        FusedAttentionV2Function = None
-except (ImportError, RuntimeError):
-    CUDA_ATTENTION_AVAILABLE = False
-    CUDA_ATTENTION_V2_AVAILABLE = False
-    FusedAttentionFunction = None
-    FusedAttentionV2Function = None
 
 
 class CustomMultiheadAttention(nn.Module):
@@ -186,21 +183,14 @@ class CustomMultiheadAttention(nn.Module):
                 )
 
             return output, None
-        except RuntimeError as e:
-            # Check if this is a shared memory error
-            if "shared memory" in str(e).lower() or "exceeds device limit" in str(e):
+        except Exception as e:
+            # Check if this is a shared memory error or V2 not available
+            if ("shared memory" in str(e).lower() or "exceeds device limit" in str(e) or
+                "fused_attention_v2" in str(e)):
                 # Fallback to PyTorch implementation
                 self._kernel_call_count -= 1
                 self._pytorch_call_count += 1
-                batch_size, seq_len, embed_dim = x.shape
-                # Silently use PyTorch fallback for this call
-                with torch.no_grad():
-                    self._pytorch_attn.in_proj_weight.copy_(self.w_qkv)
-                    self._pytorch_attn.in_proj_bias.copy_(self.bias_qkv)
-                    self._pytorch_attn.out_proj.weight.copy_(self.w_out.T)
-                    self._pytorch_attn.out_proj.bias.copy_(self.bias_out)
-                output, _ = self._pytorch_attn(x, x, x, key_padding_mask=None, need_weights=False, attn_mask=None)
-                return output, None
+                return self._forward_pytorch(x, None, False, None, True)
             else:
                 raise
 
