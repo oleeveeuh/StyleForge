@@ -46,6 +46,21 @@ bias_qkv = torch.randn(3 * embed_dim, device='cuda')
 w_out = torch.randn(embed_dim, embed_dim, device='cuda')
 bias_out = torch.randn(embed_dim, device='cuda')
 
+# DEBUG: Print what we're about to send to the kernel
+print(f"\nDEBUG: Python-side values before calling kernel:")
+print(f"  x.shape: {x.shape}, x.stride(): {x.stride()}")
+print(f"  x.is_contiguous: {x.is_contiguous()}")
+print(f"  x.data_ptr(): {x.data_ptr()}")
+print(f"  x[0, 0, 0:5]: {x[0, 0, :5].tolist()}")
+print(f"  w_qkv.shape: {w_qkv.shape}, w_qkv.stride(): {w_qkv.stride()}")
+print(f"  w_qkv.is_contiguous: {w_qkv.is_contiguous()}")
+print(f"  w_qkv[0, 0:5]: {w_qkv[0, :5].tolist()}")
+print(f"  bias_qkv[0:5]: {bias_qkv[:5].tolist()}")
+
+# Also print the first 10 values directly from memory
+x_cpu = x.cpu()
+print(f"  x[0:10] flat: {x_cpu.flatten()[:10].tolist()}")
+
 scale = 1.0 / (head_dim ** 0.5)
 
 print(f"\n" + "=" * 80)
@@ -76,9 +91,13 @@ except:
 with torch.no_grad():
     if fused_attention_v1 is not None:
         # Direct call to low-level function
+        # IMPORTANT: Make sure tensors are contiguous before passing to CUDA
         output_cuda = fused_attention_v1(
-            x, w_qkv, w_out,
-            bias_qkv, bias_out,
+            x.contiguous(),
+            w_qkv.contiguous(),
+            w_out.contiguous(),
+            bias_qkv,
+            bias_out,
             scale, num_heads
         )
     else:

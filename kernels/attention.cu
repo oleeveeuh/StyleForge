@@ -542,6 +542,7 @@ __global__ void attention_per_head_kernel(
         printf("\n=== KERNEL DEBUG: batch=0, head=0, q_pos=0, k_pos=0 ===\n");
         printf("embed_dim=%d, HEAD_DIM=%d, head_idx=%d, scale=%.6f\n", embed_dim, HEAD_DIM, head_idx, scale);
         printf("x_offset=%lld, q_start_row=%d\n", x_offset, q_start_row);
+        printf("x pointer: %p\n", (void*)x);
 
         // Print input x values
         printf("Input x[x_offset:x_offset+5]: ");
