@@ -99,11 +99,6 @@ try:
 
         # Compute Q, K, V for all positions
         # Shape: [batch, seq_len, embed_dim]
-        qkv = torch._scaled_dot_product_attention_math._fused_sdp_choice(
-            x @ w_q_pt.T, x @ w_k_pt.T, x @ w_v_pt.T
-        )
-
-        # Actually, let's compute manually
         Q_all = x @ w_q_pt.T  # [batch, seq, embed_dim]
         K_all = x @ w_k_pt.T
         V_all = x @ w_v_pt.T
