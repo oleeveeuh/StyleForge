@@ -861,6 +861,11 @@ __global__ void output_projection_kernel(
     int seq_len,
     int embed_dim
 ) {
+    // MARKER: This is the FIXED version with start_row parameter
+    if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n*** KERNEL VERSION: FIXED_QKV_PROJECTION ***\n");
+    }
+
     // Declare dynamic shared memory for reduction across heads
     extern __shared__ float s_reduce[];
 
