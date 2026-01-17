@@ -543,10 +543,9 @@ __global__ void attention_per_head_kernel(
     // Find max score: first do warp reduction, then reduce across warps
     float max_score = -INFINITY;
 
-    // Each thread reduces its portion
-    for (int i = k_pos; i < seq_len; i += WARP_SIZE) {
-        max_score = fmaxf(max_score, s_scores[i]);
-    }
+    // Each thread reads only its own score (not strided)
+    // This is simpler and avoids double-counting when seq_len > WARP_SIZE
+    max_score = s_scores[k_pos];
 
     // Warp reduction
     max_score = warp_reduce_max(max_score);
@@ -589,10 +588,8 @@ __global__ void attention_per_head_kernel(
     __syncthreads();
 
     // Reduce exp scores
-    float sum_exp = 0.0f;
-    for (int i = k_pos; i < seq_len; i += WARP_SIZE) {
-        sum_exp += s_exp_scores[i];
-    }
+    // Each thread reads only its own exp_score
+    float sum_exp = exp_score;
 
     // Warp reduction
     sum_exp = warp_reduce_sum(sum_exp);
