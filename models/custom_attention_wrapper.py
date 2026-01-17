@@ -16,17 +16,31 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple
 
-# Try to import the CUDA kernel
+# Try to import the CUDA kernels
 try:
     if torch.cuda.is_available():
+        # Try V2 first (batched queries, faster)
+        try:
+            from kernels.attention_v2_wrapper import FusedAttentionV2Function
+            CUDA_ATTENTION_V2_AVAILABLE = True
+            FusedAttentionV2Function = FusedAttentionV2Function
+        except (ImportError, RuntimeError):
+            CUDA_ATTENTION_V2_AVAILABLE = False
+            FusedAttentionV2Function = None
+
+        # V1 as fallback
         from kernels.attention_wrapper import FusedAttentionFunction
         CUDA_ATTENTION_AVAILABLE = True
     else:
         CUDA_ATTENTION_AVAILABLE = False
+        CUDA_ATTENTION_V2_AVAILABLE = False
         FusedAttentionFunction = None
+        FusedAttentionV2Function = None
 except (ImportError, RuntimeError):
     CUDA_ATTENTION_AVAILABLE = False
+    CUDA_ATTENTION_V2_AVAILABLE = False
     FusedAttentionFunction = None
+    FusedAttentionV2Function = None
 
 
 class CustomMultiheadAttention(nn.Module):
@@ -125,13 +139,17 @@ class CustomMultiheadAttention(nn.Module):
         batch_size, seq_len, embed_dim = x.shape
 
         # Check for unsupported features with CUDA kernel
+        # Prefer V2 if available
+        max_seq = FusedAttentionV2Function.MAX_SEQ_LEN if CUDA_ATTENTION_V2_AVAILABLE else (
+            FusedAttentionFunction.MAX_SEQ_LEN if CUDA_ATTENTION_AVAILABLE else 0)
+
         use_cuda = (
             self.use_cuda_kernel and
             x.is_cuda and
             key_padding_mask is None and
             attn_mask is None and
             not need_weights and
-            seq_len <= FusedAttentionFunction.MAX_SEQ_LEN if CUDA_ATTENTION_AVAILABLE else False
+            seq_len <= max_seq
         )
 
         if use_cuda:
@@ -144,16 +162,28 @@ class CustomMultiheadAttention(nn.Module):
         try:
             self._kernel_call_count += 1
 
-            # Call the fused attention kernel
-            output = FusedAttentionFunction.apply(
-                x,
-                self.w_qkv,
-                self.w_out,
-                self.bias_qkv,
-                self.bias_out,
-                self.num_heads,
-                self.scale
-            )
+            # Prefer V2 (batched queries) if available
+            if CUDA_ATTENTION_V2_AVAILABLE:
+                output = FusedAttentionV2Function.apply(
+                    x,
+                    self.w_qkv,
+                    self.w_out,
+                    self.bias_qkv,
+                    self.bias_out,
+                    self.num_heads,
+                    self.scale
+                )
+            else:
+                # Fall back to V1
+                output = FusedAttentionFunction.apply(
+                    x,
+                    self.w_qkv,
+                    self.w_out,
+                    self.bias_qkv,
+                    self.bias_out,
+                    self.num_heads,
+                    self.scale
+                )
 
             return output, None
         except RuntimeError as e:
