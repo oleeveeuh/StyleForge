@@ -24,42 +24,45 @@ from pathlib import Path
 import requests
 
 
-# Pre-trained style models from fast-neural-style repository
+# Pre-trained style models from community repositories
+# Original jcjohnson repository uses .t7 (Torch) format, not .pth (PyTorch)
+# These are working URLs from active PyTorch implementations
 STYLES = {
     "candy": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/candy.pth",
-        "size_mb": 5.4,
-        "description": "Candy style - colorful and vibrant"
-    },
-    "composition": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/composition-vii.pth",
-        "size_mb": 5.4,
-        "description": "Composition VII - abstract art style"
-    },
-    "la_muse": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/la_muse.pth",
-        "size_mb": 5.4,
-        "description": "La Muse - elegant painting style"
+        "url": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/candy.pth",
+        "size_mb": 6.4,
+        "description": "Candy style - colorful and vibrant",
+        "source": "yakhyo/fast-neural-style-transfer"
     },
     "mosaic": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/mosaic.pth",
-        "size_mb": 5.4,
-        "description": "Mosaic - tile mosaic style"
-    },
-    "starry": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/starry_night.pth",
-        "size_mb": 5.4,
-        "description": "Starry Night - Van Gogh style"
+        "url": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/mosaic.pth",
+        "size_mb": 6.4,
+        "description": "Mosaic - tile mosaic style",
+        "source": "yakhyo/fast-neural-style-transfer"
     },
     "udnie": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/udnie.pth",
-        "size_mb": 5.4,
-        "description": "Udnie - abstract expressionist style"
+        "url": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/udnie.pth",
+        "size_mb": 6.4,
+        "description": "Udnie - abstract expressionist style",
+        "source": "yakhyo/fast-neural-style-transfer"
+    },
+    "rain_princess": {
+        "url": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/rain-princess.pth",
+        "size_mb": 6.4,
+        "description": "Rain Princess - impressionist style",
+        "source": "yakhyo/fast-neural-style-transfer"
+    },
+    "starry": {
+        "url": "https://raw.githubusercontent.com/rrmina/fast-neural-style-pytorch/master/transforms/starry.pth",
+        "size_mb": 6.5,
+        "description": "Starry Night - Van Gogh style",
+        "source": "rrmina/fast-neural-style-pytorch"
     },
     "wave": {
-        "url": "https://github.com/jcjohnson/fast-neural-style/raw/master/models/the_wave.pth",
-        "size_mb": 5.4,
-        "description": "The Great Wave - Japanese art style"
+        "url": "https://raw.githubusercontent.com/rrmina/fast-neural-style-pytorch/master/transforms/wave.pth",
+        "size_mb": 6.5,
+        "description": "The Great Wave - Japanese art style",
+        "source": "rrmina/fast-neural-style-pytorch"
     },
 }
 

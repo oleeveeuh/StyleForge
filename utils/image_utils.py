@@ -137,11 +137,19 @@ def postprocess_image(
     if tensor.dim() == 4:
         tensor = tensor.squeeze(0)
 
-    # Clamp and denormalize if needed
-    if denormalize:
-        tensor = torch.clamp((tensor + 1) / 2, 0, 1)
-    else:
-        tensor = torch.clamp(tensor, 0, 1)
+    # Auto-detect and normalize the tensor range
+    tensor_min = tensor.min().item()
+    tensor_max = tensor.max().item()
+
+    # If values are in [0, 255] range (like pre-trained model outputs), normalize to [0, 1]
+    if tensor_max > 1.0:
+        tensor = tensor / 255.0
+    # If values are in [-1, 1] range, shift to [0, 1]
+    elif tensor_min < 0 or denormalize:
+        tensor = (tensor + 1.0) / 2.0
+
+    # Clamp to valid range
+    tensor = torch.clamp(tensor, 0, 1)
 
     return INV_TRANSFORM(tensor)
 

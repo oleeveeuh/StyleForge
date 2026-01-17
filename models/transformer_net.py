@@ -38,21 +38,28 @@ class ConvLayer(nn.Module):
         norm: bool = True,
     ):
         super().__init__()
-        layers = [
-            nn.ReflectionPad2d(padding),
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride)
-        ]
+        self.pad = nn.ReflectionPad2d(padding)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
 
         if norm:
-            layers.append(nn.InstanceNorm2d(out_channels, affine=True))
+            # track_running_stats=True to match pre-trained checkpoints
+            self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
+        else:
+            self.norm = None
 
         if relu:
-            layers.append(nn.ReLU(inplace=True))
-
-        self.net = nn.Sequential(*layers)
+            self.activation = nn.ReLU(inplace=True)
+        else:
+            self.activation = None
 
     def forward(self, x):
-        return self.net(x)
+        out = self.pad(x)
+        out = self.conv(out)
+        if self.norm:
+            out = self.norm(out)
+        if self.activation:
+            out = self.activation(out)
+        return out
 
 
 class ResidualBlock(nn.Module):
@@ -60,8 +67,9 @@ class ResidualBlock(nn.Module):
 
     def __init__(self, channels: int):
         super().__init__()
-        self.conv1 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=0)
-        self.conv2 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=0, relu=False)
+        # padding=1 = kernel_size // 2, maintains spatial dimensions for residual connection
+        self.conv1 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=1, relu=False)
 
     def forward(self, x):
         residual = x
@@ -83,22 +91,27 @@ class UpsampleConvLayer(nn.Module):
         upsample: int = 2,
     ):
         super().__init__()
-        layers = []
 
         if upsample > 1:
-            layers.append(nn.Upsample(scale_factor=upsample, mode='nearest'))
+            self.upsample = nn.Upsample(scale_factor=upsample, mode='nearest')
+        else:
+            self.upsample = None
 
-        layers.extend([
-            nn.ReflectionPad2d(padding),
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride),
-            nn.InstanceNorm2d(out_channels, affine=True),
-            nn.ReLU(inplace=True)
-        ])
-
-        self.net = nn.Sequential(*layers)
+        self.pad = nn.ReflectionPad2d(padding)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
+        self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
+        self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        return self.net(x)
+        if self.upsample:
+            out = self.upsample(x)
+        else:
+            out = x
+        out = self.pad(out)
+        out = self.conv(out)
+        out = self.norm(out)
+        out = self.activation(out)
+        return out
 
 
 class TransformerNet(nn.Module):
@@ -171,6 +184,11 @@ class TransformerNet(nn.Module):
         """
         Load pre-trained weights from checkpoint file.
 
+        Handles multiple checkpoint formats:
+        - PyTorch examples format (conv1, in1-3, res1-5, upsample_conv, etc.)
+        - Original pytorch format with .net naming (conv1.norm, etc.)
+        - DataParallel wrapped (module. prefix)
+
         Args:
             checkpoint_path: Path to .pth file containing state_dict
             device: Device to load weights onto (defaults to current device of model)
@@ -190,13 +208,90 @@ class TransformerNet(nn.Module):
         elif 'model' in state_dict:
             state_dict = state_dict['model']
 
-        # Remove 'module.' prefix if present (from DataParallel)
-        new_state_dict = {}
-        for k, v in state_dict.items():
-            name = k.replace('module.', '')
-            new_state_dict[name] = v
+        # Create mapping for different naming conventions
+        mapped_state_dict = {}
 
-        self.load_state_dict(new_state_dict, strict=True)
+        # Naming convention mapping from pytorch/examples to our structure
+        name_mapping = {
+            # Encoder
+            "in1": "conv1.norm",      # InstanceNorm
+            "in2": "conv2.norm",
+            "in3": "conv3.norm",
+            "conv1.conv2d": "conv1.conv",
+            "conv2.conv2d": "conv2.conv",
+            "conv3.conv2d": "conv3.conv",
+
+            # Residual blocks
+            "res1.conv1.conv2d": "residual_blocks.0.conv1.conv",
+            "res1.in1": "residual_blocks.0.conv1.norm",
+            "res1.conv2.conv2d": "residual_blocks.0.conv2.conv",
+            "res1.in2": "residual_blocks.0.conv2.norm",
+
+            "res2.conv1.conv2d": "residual_blocks.1.conv1.conv",
+            "res2.in1": "residual_blocks.1.conv1.norm",
+            "res2.conv2.conv2d": "residual_blocks.1.conv2.conv",
+            "res2.in2": "residual_blocks.1.conv2.norm",
+
+            "res3.conv1.conv2d": "residual_blocks.2.conv1.conv",
+            "res3.in1": "residual_blocks.2.conv1.norm",
+            "res3.conv2.conv2d": "residual_blocks.2.conv2.conv",
+            "res3.in2": "residual_blocks.2.conv2.norm",
+
+            "res4.conv1.conv2d": "residual_blocks.3.conv1.conv",
+            "res4.in1": "residual_blocks.3.conv1.norm",
+            "res4.conv2.conv2d": "residual_blocks.3.conv2.conv",
+            "res4.in2": "residual_blocks.3.conv2.norm",
+
+            "res5.conv1.conv2d": "residual_blocks.4.conv1.conv",
+            "res5.in1": "residual_blocks.4.conv1.norm",
+            "res5.conv2.conv2d": "residual_blocks.4.conv2.conv",
+            "res5.in2": "residual_blocks.4.conv2.norm",
+
+            # Decoder
+            "deconv1.conv2d": "deconv1.conv",
+            "in4": "deconv1.norm",
+            "deconv2.conv2d": "deconv2.conv",
+            "in5": "deconv2.norm",
+            # deconv3 is a Sequential wrapper, need special handling
+            "deconv3.conv2d": "deconv3.1",  # Maps to nn.Conv2d at index 1 in Sequential
+        }
+
+        for old_name, v in state_dict.items():
+            # Remove 'module.' prefix if present (from DataParallel)
+            name = old_name.replace('module.', '')
+
+            # Try name mapping
+            mapped = False
+            for prefix, new_name in name_mapping.items():
+                if name.startswith(prefix):
+                    suffix = name[len(prefix):]
+                    mapped_key = new_name + suffix
+                    mapped_state_dict[mapped_key] = v
+                    mapped = True
+                    break
+
+            if not mapped:
+                # Use as-is if no mapping found
+                mapped_state_dict[name] = v
+
+        # Try loading with strict=False to see what's missing/unexpected
+        try:
+            missing_keys, unexpected_keys = self.load_state_dict(mapped_state_dict, strict=False)
+
+            if missing_keys:
+                print(f"⚠️  Missing keys (will use random init): {len(missing_keys)}")
+                for key in list(missing_keys)[:5]:  # Show first 5
+                    print(f"    - {key}")
+                if len(missing_keys) > 5:
+                    print(f"    ... and {len(missing_keys) - 5} more")
+
+            if unexpected_keys:
+                print(f"⚠️  Unexpected keys (will be ignored): {len(unexpected_keys)}")
+
+        except Exception as e:
+            print(f"⚠️  Error loading checkpoint: {e}")
+            raise
+
         print(f"✅ Loaded checkpoint from {checkpoint_path}")
 
     def get_model_size(self) -> float:
@@ -211,19 +306,30 @@ class TransformerNet(nn.Module):
         return total, trainable
 
 
-# Pre-trained style names from fast-neural-style repository
+# Pre-trained style names from active community repositories
+# Note: Original jcjohnson repository uses .t7 (Torch) format, not .pth (PyTorch)
 AVAILABLE_STYLES = [
-    "candy",      # Candy style
-    "composition", # Composition VII style
-    "la_muse",    # La Muse style
-    "mosaic",     # Mosaic style
-    "starry",     # Starry Night style
-    "udnie",      # Udnie style
-    "wave",       # The Great Wave off Kanagawa style
+    "candy",         # Candy style - from yakhyo
+    "mosaic",        # Mosaic style - from yakhyo
+    "udnie",         # Udnie style - from yakhyo
+    "rain_princess", # Rain Princess style - from yakhyo
+    "starry",        # Starry Night style - from rrmina
+    "wave",          # The Great Wave style - from rrmina
 ]
+
+# Mapping of style names to their download URLs
+STYLE_URLS = {
+    "candy": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/candy.pth",
+    "mosaic": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/mosaic.pth",
+    "udnie": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/udnie.pth",
+    "rain_princess": "https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/rain-princess.pth",
+    "starry": "https://raw.githubusercontent.com/rrmina/fast-neural-style-pytorch/master/transforms/starry.pth",
+    "wave": "https://raw.githubusercontent.com/rrmina/fast-neural-style-pytorch/master/transforms/wave.pth",
+}
 
 
 def get_style_url(style_name: str) -> str:
     """Get download URL for pre-trained style weights"""
-    base_url = "https://github.com/jcjohnson/fast-neural-style/raw/master/models"
-    return f"{base_url}/{style_name}.pth"
+    if style_name not in STYLE_URLS:
+        raise ValueError(f"Unknown style: {style_name}. Available: {', '.join(AVAILABLE_STYLES)}")
+    return STYLE_URLS[style_name]
