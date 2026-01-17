@@ -78,15 +78,14 @@ class CustomMultiheadAttention(nn.Module):
         # Initialize parameters
         self._reset_parameters()
 
-        # Fallback to PyTorch MHA for CPU/MPS or when CUDA kernel disabled
-        if not self.use_cuda_kernel:
-            self._pytorch_attn = nn.MultiheadAttention(
-                embed_dim=embed_dim,
-                num_heads=num_heads,
-                bias=bias,
-                dropout=dropout,
-                batch_first=True
-            )
+        # Always create PyTorch fallback for cases where CUDA kernel fails (e.g., shared memory)
+        self._pytorch_attn = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            bias=bias,
+            dropout=dropout,
+            batch_first=True
+        )
 
         # Statistics tracking
         self._kernel_call_count = 0
