@@ -1,0 +1,45 @@
+{
+  "fast": [
+    {
+      "model_name": "fast",
+      "image_size": [
+        256,
+        256
+      ],
+      "pytorch_time_ms": 16.38470410000008,
+      "cuda_time_ms": 16.38470410000008,
+      "speedup": 1.0,
+      "pytorch_memory_mb": 0.0,
+      "cuda_memory_mb": 0.0,
+      "memory_reduction": 0.0
+    },
+    {
+      "model_name": "fast",
+      "image_size": [
+        512,
+        512
+      ],
+      "pytorch_time_ms": 54.60023749999969,
+      "cuda_time_ms": 54.60023749999969,
+      "speedup": 1.0,
+      "pytorch_memory_mb": 0.0,
+      "cuda_memory_mb": 0.0,
+      "memory_reduction": 0.0
+    }
+  ],
+  "vit_small": [
+    {
+      "model_name": "vit_small",
+      "image_size": [
+        256,
+        256
+      ],
+      "pytorch_time_ms": 5.465616600000178,
+      "cuda_time_ms": 5.465616600000178,
+      "speedup": 1.0,
+      "pytorch_memory_mb": 0.0,
+      "cuda_memory_mb": 0.0,
+      "memory_reduction": 0.0
+    }
+  ]
+}
