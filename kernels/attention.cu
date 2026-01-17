@@ -267,13 +267,19 @@ __device__ __forceinline__ float4 array_to_float4(const float* arr) {
 
 // Vectorized fused multiply-add for QKV projection
 // Processes 4 elements of embed_dim at a time for better memory coalescing
+//
+// FIXED: This function now properly handles the full [3*embed_dim, embed_dim] weight matrix
+// by using start_row to index into the correct rows.
+//
+// The key fix: w_full[(start_row + i) * embed_dim + k] instead of w_ptr[i * embed_dim + k]
 template<int HEAD_DIM>
-__device__ __forceinline__ void qkv_projection_vectorized(
+__device__ __forceinline__ void qkv_projection_from_full_matrix(
     const float* __restrict__ x_ptr,      // Input pointer
-    const float* __restrict__ w_ptr,      // Weight pointer (head-specific)
-    const float* __restrict__ bias_ptr,   // Bias pointer (or nullptr)
+    const float* __restrict__ w_full,     // Full weight matrix [3*embed_dim, embed_dim]
+    const float* __restrict__ bias_full,  // Full bias [3*embed_dim] or nullptr
     float* __restrict__ output,           // Output array[HEAD_DIM]
-    int embed_dim                         // Embedding dimension
+    int embed_dim,                        // Embedding dimension
+    int start_row                         // Starting row in w_full for this head
 ) {
     // Zero initialize output
     #pragma unroll
@@ -296,8 +302,10 @@ __device__ __forceinline__ void qkv_projection_vectorized(
         // Each output dimension accumulates contribution from 4 inputs
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            // Vectorized weight loads: w_ptr[i * embed_dim + k_offset : i * embed_dim + k_offset + 4]
-            float4 w_vec = *reinterpret_cast<const float4*>(&w_ptr[i * embed_dim + k_offset]);
+            // FIXED: Use correct row indexing into full matrix
+            // w_full[(start_row + i) * embed_dim + k_offset : ... + 4]
+            int row = start_row + i;
+            float4 w_vec = *reinterpret_cast<const float4*>(&w_full[row * embed_dim + k_offset]);
 
             // Fused multiply-add
             output[i] += x_vec.x * w_vec.x;
@@ -312,15 +320,17 @@ __device__ __forceinline__ void qkv_projection_vectorized(
         float x_val = x_ptr[k];
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            output[i] += x_val * w_ptr[i * embed_dim + k];
+            // FIXED: Use correct row indexing
+            int row = start_row + i;
+            output[i] += x_val * w_full[row * embed_dim + k];
         }
     }
 
     // Add bias if provided
-    if (bias_ptr != nullptr) {
+    if (bias_full != nullptr) {
         #pragma unroll
         for (int i = 0; i < HEAD_DIM; i++) {
-            output[i] += bias_ptr[i];
+            output[i] += bias_full[start_row + i];
         }
     }
 }
@@ -465,18 +475,18 @@ __global__ void attention_per_head_kernel(
     // Input offset
     int64_t x_offset = ((int64_t)batch_idx * seq_len + q_pos) * embed_dim;
 
-    // Q weights for this head: w_qkv[head_idx * head_dim : (head_idx+1) * head_dim, :]
-    int64_t w_q_head_offset = (int64_t)head_idx * head_dim * embed_dim;
-    const float* bias_q_ptr = (bias_qkv != nullptr) ? bias_qkv + head_idx * head_dim : nullptr;
+    // FIXED: Q projection using full weight matrix with correct start_row
+    // Q weights for this head start at row: head_idx * head_dim in the Q section
+    const int q_start_row = head_idx * HEAD_DIM;  // Row index in w_qkv
 
-    // OPTIMIZED: Use vectorized projection for better memory coalescing
-    // This processes 4 input elements at a time, reducing global memory transactions
-    qkv_projection_vectorized<HEAD_DIM>(
+    // FIXED: Use new function that properly indexes into the full weight matrix
+    qkv_projection_from_full_matrix<HEAD_DIM>(
         x + x_offset,
-        w_qkv + w_q_head_offset,
-        bias_q_ptr,
+        w_qkv,           // Full weight matrix
+        bias_qkv,        // Full bias
         q_reg,
-        embed_dim
+        embed_dim,
+        q_start_row      // Starting row for Q of this head
     );
 
     // -------------------------------------------------------------------------
@@ -497,30 +507,32 @@ __global__ void attention_per_head_kernel(
     // K, V input offset for this key position
     int64_t x_k_offset = ((int64_t)batch_idx * seq_len + k_pos) * embed_dim;
 
-    // K weights for this head: w_qkv[embed_dim + head_idx * head_dim : embed_dim + (head_idx+1) * head_dim, :]
-    int64_t w_k_head_offset = (int64_t)embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
-    const float* bias_k_ptr = (bias_qkv != nullptr) ? bias_qkv + embed_dim + head_idx * head_dim : nullptr;
+    // FIXED: K projection using full weight matrix with correct start_row
+    // K weights for this head start at row: embed_dim + head_idx * head_dim in w_qkv
+    const int k_start_row = embed_dim + head_idx * HEAD_DIM;
 
-    // V weights for this head: w_qkv[2*embed_dim + head_idx * head_dim : 2*embed_dim + (head_idx+1) * head_dim, :]
-    int64_t w_v_head_offset = (int64_t)2 * embed_dim * embed_dim + (int64_t)head_idx * head_dim * embed_dim;
-    const float* bias_v_ptr = (bias_qkv != nullptr) ? bias_qkv + 2 * embed_dim + head_idx * head_dim : nullptr;
-
-    // OPTIMIZED: Use vectorized projection for K
-    qkv_projection_vectorized<HEAD_DIM>(
+    // FIXED: Use new function that properly indexes into the full weight matrix
+    qkv_projection_from_full_matrix<HEAD_DIM>(
         x + x_k_offset,
-        w_qkv + w_k_head_offset,
-        bias_k_ptr,
+        w_qkv,           // Full weight matrix
+        bias_qkv,        // Full bias
         k_reg,
-        embed_dim
+        embed_dim,
+        k_start_row      // Starting row for K of this head
     );
 
-    // OPTIMIZED: Use vectorized projection for V
-    qkv_projection_vectorized<HEAD_DIM>(
+    // FIXED: V projection using full weight matrix with correct start_row
+    // V weights for this head start at row: 2 * embed_dim + head_idx * head_dim in w_qkv
+    const int v_start_row = 2 * embed_dim + head_idx * HEAD_DIM;
+
+    // FIXED: Use new function that properly indexes into the full weight matrix
+    qkv_projection_from_full_matrix<HEAD_DIM>(
         x + x_k_offset,
-        w_qkv + w_v_head_offset,
-        bias_v_ptr,
+        w_qkv,           // Full weight matrix
+        bias_qkv,        // Full bias
         v_reg,
-        embed_dim
+        embed_dim,
+        v_start_row      // Starting row for V of this head
     );
 
     // -------------------------------------------------------------------------
@@ -529,7 +541,7 @@ __global__ void attention_per_head_kernel(
     if (batch_idx == 0 && head_idx == 0 && q_pos == 0 && k_pos == 0) {
         printf("\n=== KERNEL DEBUG: batch=0, head=0, q_pos=0, k_pos=0 ===\n");
         printf("embed_dim=%d, HEAD_DIM=%d, head_idx=%d, scale=%.6f\n", embed_dim, HEAD_DIM, head_idx, scale);
-        printf("x_offset=%lld, w_q_head_offset=%lld\n", x_offset, w_q_head_offset);
+        printf("x_offset=%lld, q_start_row=%d\n", x_offset, q_start_row);
 
         // Print input x values
         printf("Input x[x_offset:x_offset+5]: ");
@@ -538,22 +550,22 @@ __global__ void attention_per_head_kernel(
         }
         printf("\n");
 
-        // Print Q weights (first row)
-        printf("w_qkv[w_q_head_offset + 0:5]: ");
+        // Print Q weights (first row of Q section for this head)
+        printf("w_qkv[q_start_row * embed_dim : +5]: ");
         for (int i = 0; i < 5; i++) {
-            printf("%.6f ", w_qkv[w_q_head_offset + i]);
+            printf("%.6f ", w_qkv[q_start_row * embed_dim + i]);
         }
         printf("\n");
 
         // Print Q bias
-        if (bias_q_ptr != nullptr) {
-            printf("bias_q[0:5]: ");
+        if (bias_qkv != nullptr) {
+            printf("bias_qkv[q_start_row : +5]: ");
             for (int i = 0; i < 5; i++) {
-                printf("%.6f ", bias_q_ptr[i]);
+                printf("%.6f ", bias_qkv[q_start_row + i]);
             }
             printf("\n");
         } else {
-            printf("bias_q: nullptr\n");
+            printf("bias_qkv: nullptr\n");
         }
 
         // Print computed Q values
@@ -563,21 +575,20 @@ __global__ void attention_per_head_kernel(
         }
         printf("\n");
 
-        printf("x_k_offset=%lld, w_k_head_offset=%lld\n", x_k_offset, w_k_head_offset);
-        printf("w_k_head_offset=%lld\n", w_k_head_offset);
+        printf("x_k_offset=%lld, k_start_row=%d\n", x_k_offset, k_start_row);
 
-        // Print K weights (first row)
-        printf("w_qkv[w_k_head_offset + 0:5]: ");
+        // Print K weights (first row of K section for this head)
+        printf("w_qkv[k_start_row * embed_dim : +5]: ");
         for (int i = 0; i < 5; i++) {
-            printf("%.6f ", w_qkv[w_k_head_offset + i]);
+            printf("%.6f ", w_qkv[k_start_row * embed_dim + i]);
         }
         printf("\n");
 
         // Print K bias
-        if (bias_k_ptr != nullptr) {
-            printf("bias_k[0:5]: ");
+        if (bias_qkv != nullptr) {
+            printf("bias_qkv[k_start_row : +5]: ");
             for (int i = 0; i < 5; i++) {
-                printf("%.6f ", bias_k_ptr[i]);
+                printf("%.6f ", bias_qkv[k_start_row + i]);
             }
             printf("\n");
         }
@@ -589,20 +600,20 @@ __global__ void attention_per_head_kernel(
         }
         printf("\n");
 
-        printf("w_v_head_offset=%lld\n", w_v_head_offset);
+        printf("v_start_row=%d\n", v_start_row);
 
-        // Print V weights (first row)
-        printf("w_qkv[w_v_head_offset + 0:5]: ");
+        // Print V weights (first row of V section for this head)
+        printf("w_qkv[v_start_row * embed_dim : +5]: ");
         for (int i = 0; i < 5; i++) {
-            printf("%.6f ", w_qkv[w_v_head_offset + i]);
+            printf("%.6f ", w_qkv[v_start_row * embed_dim + i]);
         }
         printf("\n");
 
         // Print V bias
-        if (bias_v_ptr != nullptr) {
-            printf("bias_v[0:5]: ");
+        if (bias_qkv != nullptr) {
+            printf("bias_qkv[v_start_row : +5]: ");
             for (int i = 0; i < 5; i++) {
-                printf("%.6f ", bias_v_ptr[i]);
+                printf("%.6f ", bias_qkv[v_start_row + i]);
             }
             printf("\n");
         }
