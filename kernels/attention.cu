@@ -770,12 +770,21 @@ __global__ void output_projection_kernel(
     int lane_id = head_idx % WARP_SIZE;
 
     // Warp-level reduction to sum contributions from all heads
-    // Only threads with head_idx < num_heads participate, so we need a valid mask
-    // For simplicity, use shared memory reduction when num_heads is not a full warp
-    if (num_heads == WARP_SIZE) {
-        // Fast path: all lanes in warp participate
-        partial_sum = warp_reduce_sum(partial_sum);
-        if (lane_id == 0) {
+    // Use warp primitives when num_heads <= WARP_SIZE with proper masking
+    if (num_heads <= WARP_SIZE) {
+        // Create mask for active lanes: only lanes 0 to num_heads-1 participate
+        unsigned int mask = (1u << num_heads) - 1u;
+
+        // Manual warp reduction with proper masking
+        #pragma unroll
+        for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+            float other = __shfl_down_sync(mask, partial_sum, offset);
+            if (head_idx + offset < num_heads) {
+                partial_sum += other;
+            }
+        }
+
+        if (head_idx == 0) {
             int64_t out_offset = ((int64_t)batch_idx * seq_len + seq_idx) * embed_dim + out_dim;
             float result = partial_sum;
             if (bias_out != nullptr) {
@@ -784,7 +793,7 @@ __global__ void output_projection_kernel(
             out[out_offset] = result;
         }
     } else {
-        // General case: use shared memory for reduction
+        // num_heads > 32: must use shared memory for cross-warp reduction
         // Each active thread stores its partial sum
         if (head_idx < num_heads) {
             s_reduce[head_idx] = partial_sum;
