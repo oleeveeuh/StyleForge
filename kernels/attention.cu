@@ -963,12 +963,12 @@ torch::Tensor fused_attention_v1(
     // KERNEL 1: Compute per-head attention outputs
     // =========================================================================
     // Thread block configuration for attention kernel
-    int threads_per_block = seq_len;
+    // Each thread in a block processes one key position, so we need seq_len threads
+    // CUDA limit: max 1024 threads per block
+    TORCH_CHECK(seq_len <= 1024, "seq_len must be <= 1024, got seq_len=", seq_len,
+                ". This is a current limitation of the attention kernel.");
 
-    // Cap threads per block at 1024 (CUDA limit)
-    if (threads_per_block > 1024) {
-        threads_per_block = 1024;
-    }
+    int threads_per_block = seq_len;
     // Ensure threads_per_block is a multiple of 32 (warp size)
     threads_per_block = ((threads_per_block + 31) / 32) * 32;
 
