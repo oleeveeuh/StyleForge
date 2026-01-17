@@ -328,6 +328,31 @@ __device__ __forceinline__ void qkv_projection_vectorized(
 // -------------------------------------------------------------------------
 // Warp-level reduction primitives
 // -------------------------------------------------------------------------
+// Masked versions for when not all lanes in a warp are active
+// The mask should have bits set for active lanes: mask = (1u << num_active_lanes) - 1u
+__device__ __forceinline__ float warp_reduce_max_masked(float val, unsigned int mask) {
+    #pragma unroll
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        float other = __shfl_down_sync(mask, val, offset);
+        if (offset & (mask - 1)) {  // Only use if the source lane is in the mask
+            val = fmaxf(val, other);
+        }
+    }
+    return val;
+}
+
+__device__ __forceinline__ float warp_reduce_sum_masked(float val, unsigned int mask) {
+    #pragma unroll
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        float other = __shfl_down_sync(mask, val, offset);
+        if (offset & (mask - 1)) {  // Only use if the source lane is in the mask
+            val += other;
+        }
+    }
+    return val;
+}
+
+// Unmasked versions (all 32 lanes active)
 __device__ __forceinline__ float warp_reduce_max(float val) {
     #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
@@ -446,6 +471,10 @@ __global__ void attention_per_head_kernel(
     if (k_pos >= seq_len)
         return;
 
+    // Compute active mask for warp reductions: only first seq_len lanes are valid
+    // This is needed when seq_len < WARP_SIZE (e.g., seq_len=4, only lanes 0-3 are active)
+    unsigned int active_mask = (seq_len >= WARP_SIZE) ? 0xffffffff : ((1u << seq_len) - 1u);
+
     // -------------------------------------------------------------------------
     // Step 1: Compute Q for this query position (same for all key positions)
     // -------------------------------------------------------------------------
@@ -547,8 +576,8 @@ __global__ void attention_per_head_kernel(
     // This is simpler and avoids double-counting when seq_len > WARP_SIZE
     max_score = s_scores[k_pos];
 
-    // Warp reduction
-    max_score = warp_reduce_max(max_score);
+    // Warp reduction with proper masking for seq_len < WARP_SIZE
+    max_score = warp_reduce_max_masked(max_score, active_mask);
 
     // Broadcast max within warp
     max_score = __shfl_sync(0xffffffff, max_score, 0);
@@ -567,9 +596,11 @@ __global__ void attention_per_head_kernel(
     int num_warps = (seq_len + WARP_SIZE - 1) / WARP_SIZE;
 
     // First warp reduces the partial max from all warps
+    // Use masked reduction since only num_warps lanes have valid data
     if (warp_id == 0) {
         max_score = (lane_id < num_warps) ? shared_mem[lane_id] : -INFINITY;
-        max_score = warp_reduce_max(max_score);
+        unsigned int warp0_mask = (num_warps >= WARP_SIZE) ? 0xffffffff : ((1u << num_warps) - 1u);
+        max_score = warp_reduce_max_masked(max_score, warp0_mask);
     }
 
     // Broadcast final max to all threads
@@ -591,8 +622,8 @@ __global__ void attention_per_head_kernel(
     // Each thread reads only its own exp_score
     float sum_exp = exp_score;
 
-    // Warp reduction
-    sum_exp = warp_reduce_sum(sum_exp);
+    // Warp reduction with proper masking for seq_len < WARP_SIZE
+    sum_exp = warp_reduce_sum_masked(sum_exp, active_mask);
 
     // Broadcast sum within warp
     sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
@@ -604,9 +635,11 @@ __global__ void attention_per_head_kernel(
     __syncthreads();
 
     // First warp reduces the partial sums from all warps
+    // Use masked reduction since only num_warps lanes have valid data
     if (warp_id == 0) {
         sum_exp = (lane_id < num_warps) ? shared_mem[lane_id] : 0.0f;
-        sum_exp = warp_reduce_sum(sum_exp);
+        unsigned int warp0_mask = (num_warps >= WARP_SIZE) ? 0xffffffff : ((1u << num_warps) - 1u);
+        sum_exp = warp_reduce_sum_masked(sum_exp, warp0_mask);
     }
 
     // Broadcast final sum_exp to all threads
@@ -655,9 +688,10 @@ __global__ void attention_per_head_kernel(
     }
 
     // Warp-level reduction: sum partial contributions from threads in this warp
+    // Use masked reduction when seq_len < WARP_SIZE
     #pragma unroll
     for (int i = 0; i < HEAD_DIM; i++) {
-        head_output[i] = warp_reduce_sum(head_output[i]);
+        head_output[i] = warp_reduce_sum_masked(head_output[i], active_mask);
     }
 
     // For multi-warp blocks, we need to reduce across warps
