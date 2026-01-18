@@ -25,7 +25,7 @@ CUDA Kernels:
 
 import torch
 import torch.nn as nn
-from typing import Optional
+from typing import Optional, Literal
 
 # Try to import CUDA kernels for accelerated InstanceNorm
 # Only available on CUDA devices (not MPS/CPU)
@@ -33,13 +33,16 @@ try:
     import torch
     if torch.cuda.is_available():
         from kernels.instance_norm_wrapper import FusedInstanceNorm2d
-        CUDA_INSTANCE_NORM_AVAILABLE = True
+        from kernels.conv_fusion_wrapper import FusedConvInstanceNormReLU
+        CUDA_KERNELS_AVAILABLE = True
     else:
-        CUDA_INSTANCE_NORM_AVAILABLE = False
+        CUDA_KERNELS_AVAILABLE = False
         FusedInstanceNorm2d = None
+        FusedConvInstanceNormReLU = None
 except (ImportError, RuntimeError):
-    CUDA_INSTANCE_NORM_AVAILABLE = False
+    CUDA_KERNELS_AVAILABLE = False
     FusedInstanceNorm2d = None
+    FusedConvInstanceNormReLU = None
 
 
 class ConvLayer(nn.Module):
@@ -62,7 +65,7 @@ class ConvLayer(nn.Module):
         if norm:
             # Use CUDA kernel if available, otherwise PyTorch InstanceNorm
             # track_running_stats=True to match pre-trained checkpoints
-            if CUDA_INSTANCE_NORM_AVAILABLE:
+            if CUDA_KERNELS_AVAILABLE and FusedInstanceNorm2d is not None:
                 self.norm = FusedInstanceNorm2d(out_channels, affine=True)
                 self._use_cuda_norm = True
             else:
@@ -126,7 +129,7 @@ class UpsampleConvLayer(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
 
         # Use CUDA kernel if available, otherwise PyTorch InstanceNorm
-        if CUDA_INSTANCE_NORM_AVAILABLE:
+        if CUDA_KERNELS_AVAILABLE and FusedInstanceNorm2d is not None:
             self.norm = FusedInstanceNorm2d(out_channels, affine=True)
         else:
             self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
@@ -347,6 +350,270 @@ class TransformerNet(nn.Module):
         total = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         return total, trainable
+
+
+# =============================================================================
+# Variant: Pure PyTorch Baseline (no CUDA kernels)
+# =============================================================================
+
+class ConvLayerBaseline(nn.Module):
+    """Convolution -> InstanceNorm -> ReLU (Pure PyTorch, no CUDA kernels)"""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int,
+        padding: int = 0,
+        relu: bool = True,
+        norm: bool = True,
+    ):
+        super().__init__()
+        self.pad = nn.ReflectionPad2d(padding)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
+
+        if norm:
+            self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
+        else:
+            self.norm = None
+
+        if relu:
+            self.activation = nn.ReLU(inplace=True)
+        else:
+            self.activation = None
+
+    def forward(self, x):
+        out = self.pad(x)
+        out = self.conv(out)
+        if self.norm:
+            out = self.norm(out)
+        if self.activation:
+            out = self.activation(out)
+        return out
+
+
+class ResidualBlockBaseline(nn.Module):
+    """Residual block with pure PyTorch layers"""
+
+    def __init__(self, channels: int):
+        super().__init__()
+        self.conv1 = ConvLayerBaseline(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = ConvLayerBaseline(channels, channels, kernel_size=3, stride=1, padding=1, relu=False)
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.conv2(out)
+        return residual + out
+
+
+class UpsampleConvLayerBaseline(nn.Module):
+    """Upsample (nearest neighbor) -> Conv -> InstanceNorm -> ReLU (Pure PyTorch)"""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int,
+        padding: int = 0,
+        upsample: int = 2,
+    ):
+        super().__init__()
+
+        if upsample > 1:
+            self.upsample = nn.Upsample(scale_factor=upsample, mode='nearest')
+        else:
+            self.upsample = None
+
+        self.pad = nn.ReflectionPad2d(padding)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
+        self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
+        self.activation = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        if self.upsample:
+            out = self.upsample(x)
+        else:
+            out = x
+        out = self.pad(out)
+        out = self.conv(out)
+        out = self.norm(out)
+        out = self.activation(out)
+        return out
+
+
+class TransformerNetBaseline(nn.Module):
+    """
+    Pure PyTorch baseline - No CUDA kernels
+
+    This is the baseline for comparison. Uses standard PyTorch operations.
+    """
+
+    def __init__(self, num_residual_blocks: int = 5):
+        super().__init__()
+
+        self.conv1 = ConvLayerBaseline(3, 32, kernel_size=9, stride=1, padding=4)
+        self.conv2 = ConvLayerBaseline(32, 64, kernel_size=3, stride=2, padding=1)
+        self.conv3 = ConvLayerBaseline(64, 128, kernel_size=3, stride=2, padding=1)
+
+        self.residual_blocks = nn.Sequential(
+            *[ResidualBlockBaseline(128) for _ in range(num_residual_blocks)]
+        )
+
+        self.deconv1 = UpsampleConvLayerBaseline(128, 64, kernel_size=3, stride=1, padding=1, upsample=2)
+        self.deconv2 = UpsampleConvLayerBaseline(64, 32, kernel_size=3, stride=1, padding=1, upsample=2)
+
+        self.deconv3 = nn.Sequential(
+            nn.ReflectionPad2d(4),
+            nn.Conv2d(32, 3, kernel_size=9, stride=1)
+        )
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.conv3(out)
+        out = self.residual_blocks(out)
+        out = self.deconv1(out)
+        out = self.deconv2(out)
+        out = self.deconv3(out)
+        return out
+
+
+# =============================================================================
+# Variant: Fully Fused (Conv+IN+ReLU)
+# =============================================================================
+
+class FusedConvLayer(nn.Module):
+    """Fused Convolution -> InstanceNorm -> ReLU in a single CUDA kernel"""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int,
+        padding: int = 0,
+        relu: bool = True,
+    ):
+        super().__init__()
+        self.pad = nn.ReflectionPad2d(padding)
+
+        # Use FusedConvInstanceNormReLU if available
+        if CUDA_KERNELS_AVAILABLE and FusedConvInstanceNormReLU is not None:
+            self.fused = FusedConvInstanceNormReLU(
+                in_channels, out_channels, kernel_size, stride
+            )
+            self._use_fused = True
+        else:
+            # Fall back to separate layers
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
+            self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
+            self.activation = nn.ReLU(inplace=True)
+            self._use_fused = False
+
+    def forward(self, x):
+        out = self.pad(x)
+        if self._use_fused:
+            out = self.fused(out)
+        else:
+            out = self.conv(out)
+            out = self.norm(out)
+            out = self.activation(out)
+        return out
+
+
+class FusedResidualBlock(nn.Module):
+    """Residual block with fused Conv+IN+ReLU layers"""
+
+    def __init__(self, channels: int):
+        super().__init__()
+        self.conv1 = FusedConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = FusedConvLayer(channels, channels, kernel_size=3, stride=1, padding=1, relu=False)
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.conv2(out)
+        return residual + out
+
+
+class TransformerNetFused(nn.Module):
+    """
+    Fully fused variant using FusedConvInstanceNormReLU
+
+    This version fuses Conv+InstanceNorm+ReLU into a single kernel
+    for maximum performance.
+    """
+
+    def __init__(self, num_residual_blocks: int = 5):
+        super().__init__()
+
+        self.conv1 = FusedConvLayer(3, 32, kernel_size=9, stride=1, padding=4)
+        self.conv2 = FusedConvLayer(32, 64, kernel_size=3, stride=2, padding=1)
+        self.conv3 = FusedConvLayer(64, 128, kernel_size=3, stride=2, padding=1)
+
+        self.residual_blocks = nn.Sequential(
+            *[FusedResidualBlock(128) for _ in range(num_residual_blocks)]
+        )
+
+        self.deconv1 = FusedConvLayer(128, 64, kernel_size=3, stride=1, padding=1)
+        self.deconv2 = FusedConvLayer(64, 32, kernel_size=3, stride=1, padding=1)
+
+        self.deconv3 = nn.Sequential(
+            nn.ReflectionPad2d(4),
+            nn.Conv2d(32, 3, kernel_size=9, stride=1)
+        )
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.conv3(out)
+        out = self.residual_blocks(out)
+        out = self.deconv1(out)
+        out = self.deconv2(out)
+        out = self.deconv3(out)
+        return out
+
+
+# =============================================================================
+# Variant Factory
+# =============================================================================
+
+def create_transformer_net(
+    variant: Literal["auto", "baseline", "fused"] = "auto",
+    num_residual_blocks: int = 5
+) -> nn.Module:
+    """
+    Create a TransformerNet with the specified variant.
+
+    Args:
+        variant:
+            - "auto": Use CUDA kernels if available (default TransformerNet)
+            - "baseline": Pure PyTorch, no CUDA kernels
+            - "fused": Fully fused Conv+IN+ReLU kernels
+        num_residual_blocks: Number of residual blocks
+
+    Returns:
+        TransformerNet model
+    """
+    if variant == "auto":
+        return TransformerNet(num_residual_blocks)
+    elif variant == "baseline":
+        return TransformerNetBaseline(num_residual_blocks)
+    elif variant == "fused":
+        return TransformerNetFused(num_residual_blocks)
+    else:
+        raise ValueError(f"Unknown variant: {variant}. Choose from: auto, baseline, fused")
+
+
+def get_available_variants() -> list[str]:
+    """Return list of available variants based on CUDA availability"""
+    variants = ["baseline"]
+    if CUDA_KERNELS_AVAILABLE:
+        variants.extend(["auto", "fused"])
+    return variants
 
 
 # Pre-trained style names from active community repositories
