@@ -314,11 +314,11 @@ __global__ void fused_conv_instance_norm_relu_kernel(
         int spatial_idx = spatial_base + tid;
         float conv_val = 0.0f;
 
-        if (spatial_idx < spatial_size) {
-            // Decompose spatial_idx to (h_out, w_out)
-            int h_out = spatial_idx / W_out;
-            int w_out = spatial_idx % W_out;
+        // Decompose spatial_idx to (h_out, w_out) - declare outside if block
+        int h_out = (spatial_idx < spatial_size) ? spatial_idx / W_out : 0;
+        int w_out = (spatial_idx < spatial_size) ? spatial_idx % W_out : 0;
 
+        if (spatial_idx < spatial_size) {
             // Compute convolution for this position
             int h_in_start = h_out * STRIDE - PADDING;
             int w_in_start = w_out * STRIDE - PADDING;
@@ -566,17 +566,49 @@ torch::Tensor fused_conv_instance_norm_relu(
         // Allocate intermediate buffer
         auto conv_buffer = torch::zeros({N, C_out, H_out, W_out}, input.options());
 
-        // Launch stage 1 (generic)
-        if (K == 3) {
-            conv_stage1_kernel<3, STRIDE, PADDING><<<num_blocks, BLOCK_SIZE>>>(
+        // Launch stage 1 (generic) - loop over supported kernel sizes
+        if (K == 3 && stride == 1 && padding == 1) {
+            conv_stage1_kernel<3, 1, 1><<<num_blocks, BLOCK_SIZE>>>(
                 input.data_ptr<float>(),
                 weight.data_ptr<float>(),
                 bias_ptr,
                 conv_buffer.data_ptr<float>(),
                 N, C_in, C_out, H, W, H_out, W_out
             );
-        } else if (K == 1) {
-            conv_stage1_kernel<1, STRIDE, PADDING><<<num_blocks, BLOCK_SIZE>>>(
+        } else if (K == 3 && stride == 2 && padding == 1) {
+            conv_stage1_kernel<3, 2, 1><<<num_blocks, BLOCK_SIZE>>>(
+                input.data_ptr<float>(),
+                weight.data_ptr<float>(),
+                bias_ptr,
+                conv_buffer.data_ptr<float>(),
+                N, C_in, C_out, H, W, H_out, W_out
+            );
+        } else if (K == 1 && stride == 1 && padding == 0) {
+            conv_stage1_kernel<1, 1, 0><<<num_blocks, BLOCK_SIZE>>>(
+                input.data_ptr<float>(),
+                weight.data_ptr<float>(),
+                bias_ptr,
+                conv_buffer.data_ptr<float>(),
+                N, C_in, C_out, H, W, H_out, W_out
+            );
+        } else if (K == 4 && stride == 2 && padding == 1) {
+            conv_stage1_kernel<4, 2, 1><<<num_blocks, BLOCK_SIZE>>>(
+                input.data_ptr<float>(),
+                weight.data_ptr<float>(),
+                bias_ptr,
+                conv_buffer.data_ptr<float>(),
+                N, C_in, C_out, H, W, H_out, W_out
+            );
+        } else if (K == 5 && stride == 1 && padding == 2) {
+            conv_stage1_kernel<5, 1, 2><<<num_blocks, BLOCK_SIZE>>>(
+                input.data_ptr<float>(),
+                weight.data_ptr<float>(),
+                bias_ptr,
+                conv_buffer.data_ptr<float>(),
+                N, C_in, C_out, H, W, H_out, W_out
+            );
+        } else if (K == 5 && stride == 2 && padding == 2) {
+            conv_stage1_kernel<5, 2, 2><<<num_blocks, BLOCK_SIZE>>>(
                 input.data_ptr<float>(),
                 weight.data_ptr<float>(),
                 bias_ptr,
@@ -584,7 +616,8 @@ torch::Tensor fused_conv_instance_norm_relu(
                 N, C_in, C_out, H, W, H_out, W_out
             );
         } else {
-            TORCH_CHECK(false, "Unsupported kernel size: ", K, ". Supported: 1, 3, 4, 5");
+            TORCH_CHECK(false, "Unsupported kernel config: K=", K, " stride=", stride, " padding=", padding,
+                       ". Supported: K=1 (stride=1, pad=0), K=3 (stride=1/2, pad=1), K=4 (stride=2, pad=1), K=5 (stride=1/2, pad=2)");
         }
 
         CUDA_CHECK(cudaGetLastError());
