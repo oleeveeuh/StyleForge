@@ -544,23 +544,35 @@ class TransformerNetFused(nn.Module):
     Fully fused variant using FusedConvInstanceNormReLU
 
     This version fuses Conv+InstanceNorm+ReLU into a single kernel
-    for maximum performance.
+    for maximum performance. Uses fused kernels for 3x3 convolutions
+    and falls back to standard PyTorch for 9x9 convolutions.
     """
 
     def __init__(self, num_residual_blocks: int = 5):
         super().__init__()
 
-        self.conv1 = FusedConvLayer(3, 32, kernel_size=9, stride=1, padding=4)
+        # For 9x9 kernels, use standard PyTorch (fused kernel only supports 1-5)
+        self.conv1 = nn.Sequential(
+            nn.ReflectionPad2d(4),
+            nn.Conv2d(3, 32, kernel_size=9, stride=1),
+            FusedInstanceNorm2d(32, affine=True) if (CUDA_KERNELS_AVAILABLE and FusedInstanceNorm2d is not None) else nn.InstanceNorm2d(32, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True)
+        )
+
+        # 3x3 kernels can use full fusion
         self.conv2 = FusedConvLayer(32, 64, kernel_size=3, stride=2, padding=1)
         self.conv3 = FusedConvLayer(64, 128, kernel_size=3, stride=2, padding=1)
 
+        # Residual blocks use 3x3 kernels - fully fused
         self.residual_blocks = nn.Sequential(
             *[FusedResidualBlock(128) for _ in range(num_residual_blocks)]
         )
 
+        # 3x3 upsample convs - fully fused
         self.deconv1 = FusedConvLayer(128, 64, kernel_size=3, stride=1, padding=1)
         self.deconv2 = FusedConvLayer(64, 32, kernel_size=3, stride=1, padding=1)
 
+        # Final 9x9 conv - standard PyTorch
         self.deconv3 = nn.Sequential(
             nn.ReflectionPad2d(4),
             nn.Conv2d(32, 3, kernel_size=9, stride=1)
