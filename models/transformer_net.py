@@ -482,11 +482,17 @@ class TransformerNetBaseline(nn.Module):
 
 
 # =============================================================================
-# Variant: Fully Fused (Conv+IN+ReLU)
+# Variant: Optimized (PyTorch Conv2d + FusedInstanceNorm2d)
 # =============================================================================
 
-class FusedConvLayer(nn.Module):
-    """Fused Convolution -> InstanceNorm -> ReLU in a single CUDA kernel"""
+class OptimizedConvLayer(nn.Module):
+    """
+    Optimized Convolution -> InstanceNorm -> ReLU
+
+    Uses PyTorch's highly optimized Conv2d (cuDNN) + FusedInstanceNorm2d.
+    This is faster than trying to fuse all three operations because cuDNN's
+    convolution is heavily optimized and difficult to beat.
+    """
 
     def __init__(
         self,
@@ -498,53 +504,36 @@ class FusedConvLayer(nn.Module):
         relu: bool = True,
     ):
         super().__init__()
+        self.pad = nn.ReflectionPad2d(padding)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
 
-        # Use FusedConvInstanceNormReLU if available
-        if CUDA_KERNELS_AVAILABLE and FusedConvInstanceNormReLU is not None:
-            # For stride=1, use external ReflectionPad2d and padding=0 in kernel
-            # For stride>1, use internal padding only (no ReflectionPad2d)
-            if stride == 1 and padding > 0:
-                self.pad = nn.ReflectionPad2d(padding)
-                self.fused = FusedConvInstanceNormReLU(
-                    in_channels, out_channels, kernel_size, stride, padding=0
-                )
-                self._use_external_pad = True
-            else:
-                self.pad = None
-                self.fused = FusedConvInstanceNormReLU(
-                    in_channels, out_channels, kernel_size, stride, padding=padding
-                )
-                self._use_external_pad = False
-            self._use_fused = True
+        # Use FusedInstanceNorm2d if available
+        if CUDA_KERNELS_AVAILABLE and FusedInstanceNorm2d is not None:
+            self.norm = FusedInstanceNorm2d(out_channels, affine=True)
         else:
-            # Fall back to separate layers
-            self.pad = nn.ReflectionPad2d(padding)
-            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=padding)
             self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
+
+        if relu:
             self.activation = nn.ReLU(inplace=True)
-            self._use_fused = False
-            self._use_external_pad = False
+        else:
+            self.activation = None
 
     def forward(self, x):
-        if self._use_fused:
-            if self._use_external_pad:
-                x = self.pad(x)
-            out = self.fused(x)
-        else:
-            out = self.pad(x)
-            out = self.conv(out)
-            out = self.norm(out)
+        out = self.pad(x)
+        out = self.conv(out)
+        out = self.norm(out)
+        if self.activation:
             out = self.activation(out)
         return out
 
 
-class FusedResidualBlock(nn.Module):
-    """Residual block with fused Conv+IN+ReLU layers"""
+class OptimizedResidualBlock(nn.Module):
+    """Residual block with optimized Conv+IN+ReLU layers"""
 
     def __init__(self, channels: int):
         super().__init__()
-        self.conv1 = FusedConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.conv2 = FusedConvLayer(channels, channels, kernel_size=3, stride=1, padding=1, relu=False)
+        self.conv1 = OptimizedConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = OptimizedConvLayer(channels, channels, kernel_size=3, stride=1, padding=1, relu=False)
 
     def forward(self, x):
         residual = x
@@ -555,38 +544,32 @@ class FusedResidualBlock(nn.Module):
 
 class TransformerNetFused(nn.Module):
     """
-    Fully fused variant using FusedConvInstanceNormReLU
+    Optimized variant using PyTorch Conv2d + FusedInstanceNorm2d
 
-    This version fuses Conv+InstanceNorm+ReLU into a single kernel
-    for maximum performance. Uses fused kernels for 3x3 convolutions
-    and falls back to standard PyTorch for 9x9 convolutions.
+    This approach combines cuDNN's highly optimized convolution with
+    our custom fused InstanceNorm kernel. This is faster than trying
+    to fuse all three operations because cuDNN's convolution kernels
+    are extremely well-optimized.
     """
 
     def __init__(self, num_residual_blocks: int = 5):
         super().__init__()
 
-        # For 9x9 kernels, use standard PyTorch (fused kernel only supports 1-5)
-        self.conv1 = nn.Sequential(
-            nn.ReflectionPad2d(4),
-            nn.Conv2d(3, 32, kernel_size=9, stride=1),
-            FusedInstanceNorm2d(32, affine=True) if (CUDA_KERNELS_AVAILABLE and FusedInstanceNorm2d is not None) else nn.InstanceNorm2d(32, affine=True, track_running_stats=True),
-            nn.ReLU(inplace=True)
-        )
+        # All layers use optimized Conv2d + FusedInstanceNorm2d
+        self.conv1 = OptimizedConvLayer(3, 32, kernel_size=9, stride=1, padding=4)
+        self.conv2 = OptimizedConvLayer(32, 64, kernel_size=3, stride=2, padding=1)
+        self.conv3 = OptimizedConvLayer(64, 128, kernel_size=3, stride=2, padding=1)
 
-        # 3x3 kernels can use full fusion
-        self.conv2 = FusedConvLayer(32, 64, kernel_size=3, stride=2, padding=1)
-        self.conv3 = FusedConvLayer(64, 128, kernel_size=3, stride=2, padding=1)
-
-        # Residual blocks use 3x3 kernels - fully fused
+        # Residual blocks
         self.residual_blocks = nn.Sequential(
-            *[FusedResidualBlock(128) for _ in range(num_residual_blocks)]
+            *[OptimizedResidualBlock(128) for _ in range(num_residual_blocks)]
         )
 
-        # 3x3 upsample convs - fully fused
-        self.deconv1 = FusedConvLayer(128, 64, kernel_size=3, stride=1, padding=1)
-        self.deconv2 = FusedConvLayer(64, 32, kernel_size=3, stride=1, padding=1)
+        # Upsampling layers
+        self.deconv1 = OptimizedConvLayer(128, 64, kernel_size=3, stride=1, padding=1)
+        self.deconv2 = OptimizedConvLayer(64, 32, kernel_size=3, stride=1, padding=1)
 
-        # Final 9x9 conv - standard PyTorch
+        # Final layer (no norm, no activation)
         self.deconv3 = nn.Sequential(
             nn.ReflectionPad2d(4),
             nn.Conv2d(32, 3, kernel_size=9, stride=1)
