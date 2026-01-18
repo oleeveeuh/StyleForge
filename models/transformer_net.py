@@ -498,27 +498,40 @@ class FusedConvLayer(nn.Module):
         relu: bool = True,
     ):
         super().__init__()
-        self.pad = nn.ReflectionPad2d(padding)
 
         # Use FusedConvInstanceNormReLU if available
         if CUDA_KERNELS_AVAILABLE and FusedConvInstanceNormReLU is not None:
-            # Pass padding=0 to fused kernel since we apply ReflectionPad2d separately
-            self.fused = FusedConvInstanceNormReLU(
-                in_channels, out_channels, kernel_size, stride, padding=0
-            )
+            # For stride=1, use external ReflectionPad2d and padding=0 in kernel
+            # For stride>1, use internal padding only (no ReflectionPad2d)
+            if stride == 1 and padding > 0:
+                self.pad = nn.ReflectionPad2d(padding)
+                self.fused = FusedConvInstanceNormReLU(
+                    in_channels, out_channels, kernel_size, stride, padding=0
+                )
+                self._use_external_pad = True
+            else:
+                self.pad = None
+                self.fused = FusedConvInstanceNormReLU(
+                    in_channels, out_channels, kernel_size, stride, padding=padding
+                )
+                self._use_external_pad = False
             self._use_fused = True
         else:
             # Fall back to separate layers
+            self.pad = nn.ReflectionPad2d(padding)
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=padding)
             self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
             self.activation = nn.ReLU(inplace=True)
             self._use_fused = False
+            self._use_external_pad = False
 
     def forward(self, x):
-        out = self.pad(x)
         if self._use_fused:
-            out = self.fused(out)
+            if self._use_external_pad:
+                x = self.pad(x)
+            out = self.fused(x)
         else:
+            out = self.pad(x)
             out = self.conv(out)
             out = self.norm(out)
             out = self.activation(out)
