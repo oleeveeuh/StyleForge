@@ -302,23 +302,24 @@ class TransformerNet(nn.Module):
                     break
 
             if not mapped:
-                # Map weight/bias to gamma/beta for FusedInstanceNorm2d
-                if name.endswith('.weight'):
-                    mapped_key = name[:-7] + '.gamma'
-                    mapped_state_dict[mapped_key] = v
-                    mapped = True
-                elif name.endswith('.bias'):
-                    mapped_key = name[:-5] + '.beta'
-                    mapped_state_dict[mapped_key] = v
-                    mapped = True
-
-            if not mapped:
                 # Use as-is if no mapping found
                 mapped_state_dict[name] = v
 
+        # Post-process: map .weight/.bias to .gamma/.beta for InstanceNorm parameters
+        final_state_dict = {}
+        for key, value in mapped_state_dict.items():
+            # For InstanceNorm layers (keys ending in .norm), map weight/bias to gamma/beta
+            if key.endswith('.norm.weight'):
+                final_state_dict[key[:-6] + 'gamma'] = value
+            elif key.endswith('.norm.bias'):
+                # Remove '.bias' (5 chars) and add '.beta'
+                final_state_dict[key[:-5] + '.beta'] = value
+            else:
+                final_state_dict[key] = value
+
         # Try loading with strict=False to see what's missing/unexpected
         try:
-            missing_keys, unexpected_keys = self.load_state_dict(mapped_state_dict, strict=False)
+            missing_keys, unexpected_keys = self.load_state_dict(final_state_dict, strict=False)
 
             if missing_keys:
                 print(f"⚠️  Missing keys (will use random init): {len(missing_keys)}")
