@@ -616,6 +616,22 @@ def get_available_variants() -> list[str]:
     return variants
 
 
+# Export all classes
+__all__ = [
+    "TransformerNet",
+    "TransformerNetBaseline",
+    "TransformerNetFused",
+    "ConvLayer",
+    "ResidualBlock",
+    "UpsampleConvLayer",
+    "create_transformer_net",
+    "get_available_variants",
+    "AVAILABLE_STYLES",
+    "STYLE_URLS",
+    "get_style_url",
+]
+
+
 # Pre-trained style names from active community repositories
 # Note: Original jcjohnson repository uses .t7 (Torch) format, not .pth (PyTorch)
 AVAILABLE_STYLES = [
