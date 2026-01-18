@@ -19,6 +19,8 @@ Expected Speedup: 3-5x over original for typical style transfer workloads
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 #include <cmath>
+#include <type_traits>
+#include <algorithm>
 
 // ============================================
 // CUDA Error Checking
@@ -40,7 +42,25 @@ Expected Speedup: 3-5x over original for typical style transfer workloads
 // ============================================
 constexpr int WARP_SIZE = 32;
 constexpr int TILE_SIZE = 16;
-constexpr int MAX_BLOCK_SIZE = 256;
+
+// ============================================
+// Device Conversion Functions
+// ============================================
+
+template<typename T>
+__device__ __forceinline__ float to_float(T val) {
+    return static_cast<float>(val);
+}
+
+template<>
+__device__ __forceinline__ float to_float<__half>(__half val) {
+    return __half2float(val);
+}
+
+template<>
+__device__ __forceinline__ float to_float<__nv_bfloat16>(__nv_bfloat16 val) {
+    return __bfloat162float(val);
+}
 
 // ============================================
 // Device Math Functions
@@ -136,8 +156,9 @@ __global__ void conv_1x1_mixed_precision(
     const InputType* weight_row = &weight[c_out * C_in];
 
     // Vectorized path for aligned access
+    // Note: PyTorch allocators typically provide 16-byte alignment for tensors
     constexpr int VEC_SIZE = 4;
-    if (C_in >= VEC_SIZE && ((size_t)weight_row % sizeof(float4)) == 0) {
+    if (C_in >= VEC_SIZE) {
         int vec_iters = C_in / VEC_SIZE;
         
         for (int i = 0; i < vec_iters; i++) {
@@ -244,17 +265,8 @@ __global__ void conv_tiled_optimized(
     if (n >= N) return;
 
     float sum = 0.0f;
-    
-    // OPTIMIZATION: Load weights into registers outside inner loop
-    float w_reg[KERNEL_SIZE][KERNEL_SIZE];
-    
+
     for (int c_in = 0; c_in < C_in; c_in++) {
-        // Load kernel weights into registers once per input channel
-        if (ty < KERNEL_SIZE && tx < KERNEL_SIZE) {
-            int weight_idx = ((c_out * C_in + c_in) * KERNEL_SIZE + ty) * KERNEL_SIZE + tx;
-            w_reg[ty][tx] = weight[weight_idx];
-        }
-        
         // Cooperative loading of input tile
         // OPTIMIZATION: Each thread loads multiple elements to maximize bandwidth
         for (int i = ty; i < TILE_IN; i += TILE_SIZE) {
@@ -264,7 +276,7 @@ __global__ void conv_tiled_optimized(
                 
                 if (in_h >= 0 && in_h < H && in_w >= 0 && in_w < W) {
                     int input_idx = ((n * C_in + c_in) * H + in_h) * W + in_w;
-                    s_input[i][j] = static_cast<float>(input[input_idx]);
+                    s_input[i][j] = to_float(input[input_idx]);
                 } else {
                     s_input[i][j] = 0.0f;
                 }
@@ -630,7 +642,7 @@ torch::Tensor fused_conv_instance_norm_relu(
     // OPTIMIZATION: Use persistent kernel with fewer blocks
     // Each block processes multiple (batch, channel) pairs
     int num_instances = N * C_out;
-    int num_blocks = min(num_instances, 256);  // Limit for good occupancy
+    int num_blocks = std::min(num_instances, 256);  // Limit for good occupancy
     
     #define LAUNCH_NORM(BS) \
         instance_norm_relu_persistent<BS><<<num_blocks, BS>>>( \
