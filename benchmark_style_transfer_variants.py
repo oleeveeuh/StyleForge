@@ -28,6 +28,7 @@ from models.transformer_net import (
     TransformerNetFused,
     create_transformer_net,
     get_available_variants,
+    CUDA_KERNELS_AVAILABLE,
 )
 
 
@@ -105,12 +106,23 @@ def compare_variants(
     input_tensor = torch.randn(1, 3, size, size, device=device)
     results = {}
 
-    # Variants to test
+    # Variants to test - skip fused variants on CPU
     variants = [
         ("baseline", TransformerNetBaseline),
-        ("auto", TransformerNet),
-        ("fused", TransformerNetFused),
     ]
+
+    # Only test CUDA variants if CUDA is available
+    if CUDA_KERNELS_AVAILABLE:
+        variants.extend([
+            ("auto", TransformerNet),
+            ("fused", TransformerNetFused),
+        ])
+    else:
+        # Still add placeholder results with None for summary table
+        results["auto"] = None
+        results["fused"] = None
+        print("AUTO       SKIPPED (CUDA not available)")
+        print("FUSED      SKIPPED (CUDA not available)")
 
     baseline_time = None
 
@@ -280,6 +292,16 @@ def main():
         if "fused" in r and r["fused"] and "auto" in r and r["auto"]:
             speedup = r["auto"]["avg_ms"] / r["fused"]["avg_ms"]
             print(f"• Fully Fused vs FusedInstanceNorm2d: {speedup:.2f}x additional speedup")
+
+    # Handle case where some variants failed or were skipped
+    for size, results in all_results.items():
+        failed = [v for v, r in results.items() if r is None]
+        if failed:
+            if not CUDA_KERNELS_AVAILABLE:
+                print(f"\n⚠️  Resolution {size}x{size}: CUDA variants skipped (CUDA not available)")
+            else:
+                print(f"\n⚠️  Resolution {size}x{size}: Some variants failed: {', '.join(failed)}")
+                print("   This may be due to CUDA kernel compilation errors or missing dependencies.")
 
     print(f"\n{'='*70}")
 
