@@ -1,0 +1,80 @@
+name: Deploy to Hugging Face Spaces
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'huggingface-space/**'
+  workflow_dispatch:
+
+env:
+  HF_SPACE_NAME: styleforge
+  HF_USERNAME: olivialiau
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Deploy to Hugging Face Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # Check if HF_TOKEN is set
+          if [ -z "$HF_TOKEN" ]; then
+            echo "Error: HF_TOKEN secret is not set"
+            echo "Please add HF_TOKEN to your repository secrets"
+            echo "Get your token from: https://huggingface.co/settings/tokens"
+            exit 1
+          fi
+
+          # Clone the existing Space (or create new)
+          echo "Cloning Hugging Face Space..."
+          git clone https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME temp_space
+
+          # Copy files from huggingface-space directory
+          echo "Copying files..."
+          rm -rf temp_space/*
+          cp -r huggingface-space/* temp_space/
+
+          # If there's a .gitignore in the source, don't copy it (Space has its own)
+          rm -f temp_space/.gitignore
+
+          # Commit and push
+          cd temp_space
+          git add .
+          git status
+
+          # Create commit message with info
+          COMMIT_MSG="Deploy from GitHub - $(date '+%Y-%m-%d %H:%M:%S')
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to deploy"
+          else
+            git commit -m "$COMMIT_MSG"
+            echo "Pushing to Hugging Face..."
+            git push origin main
+            echo "Deployment successful!"
+            echo "Space URL: https://huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME"
+          fi
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Space URL:** https://huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Direct App:** https://$HF_USERNAME-$HF_SPACE_NAME.hf.space" >> $GITHUB_STEP_SUMMARY
