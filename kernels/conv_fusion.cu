@@ -7,10 +7,8 @@ Fuses three operations into a single kernel launch:
     3. ReLU activation
 
 Key Optimizations:
-- Two-pass algorithm: First compute conv outputs and channel statistics,
-  then normalize and apply ReLU
+- Two-phase algorithm: First compute all conv outputs, then normalize
 - Warp-level reductions for efficient mean/variance computation
-- Shared memory tiling for convolution
 - Vectorized memory access where possible
 - Eliminates 2 intermediate tensor allocations
 
@@ -20,15 +18,15 @@ Expected Use Case: Style transfer networks with residual blocks
 Architecture:
     Input [N, C_in, H, W]
         ↓
-    [Step 1] Conv2d → Intermediate [N, C_out, H_out, W_out]
+    [Phase 1] Conv2d → Intermediate [N, C_out, H_out, W_out]
         ↓
-    [Step 2] Compute per-channel mean/variance (warp reductions)
+    [Phase 2] Compute per-channel mean/variance (warp reductions)
         ↓
-    [Step 3] Normalize: (x - mean) / sqrt(var + eps)
+    [Phase 3] Normalize: (x - mean) / sqrt(var + eps)
         ↓
-    [Step 4] Affine: gamma * normalized + beta
+    [Phase 4] Affine: gamma * normalized + beta
         ↓
-    [Step 5] ReLU: max(0, x)
+    [Phase 5] ReLU: max(0, x)
         ↓
     Output [N, C_out, H_out, W_out]
 */
@@ -57,8 +55,7 @@ Architecture:
 // Constants
 // ============================================
 constexpr int WARP_SIZE = 32;
-constexpr int MAX_BLOCK_SIZE = 256;
-constexpr int MAX_CHANNELS = 512;
+constexpr int MAX_BLOCK_SIZE = 1024;
 
 // ============================================
 // Device Math Functions
@@ -72,36 +69,20 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
     return val;
 }
 
-__device__ __forceinline__ float warp_reduce_max(float val) {
-    #pragma unroll
-    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
-        val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
-    }
-    return val;
-}
-
 // ============================================
-// Stage 1 Kernel: Convolution + Statistics Collection
+// Phase 1: Convolution Kernel
 // ============================================
-
-/*
- * First pass: Compute convolution and collect channel statistics
- *
- * Grid layout: (N, C_out, H_out, W_out) flattened
- * Each thread computes one output pixel from convolution
- * Results stored in temporary buffer for statistics computation
- */
 
 template<int KERNEL_SIZE, int STRIDE, int PADDING>
-__global__ void conv_stage1_kernel(
+__global__ void conv_kernel(
     const float* __restrict__ input,     // [N, C_in, H, W]
     const float* __restrict__ weight,    // [C_out, C_in, K, K]
     const float* __restrict__ bias,      // [C_out] or nullptr
-    float* __restrict__ conv_output,     // [N, C_out, H_out, W_out]
+    float* __restrict__ output,          // [N, C_out, H_out, W_out]
     int N, int C_in, int C_out,
     int H, int W, int H_out, int W_out
 ) {
-    // Global thread ID
+    // Grid layout: (N, C_out, H_out, W_out) flattened
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     int total_elements = N * C_out * H_out * W_out;
 
@@ -148,43 +129,35 @@ __global__ void conv_stage1_kernel(
         sum += bias[c_out];
     }
 
-    // Write to intermediate buffer
+    // Write output
     int output_idx = ((n * C_out + c_out) * H_out + h_out) * W_out + w_out;
-    conv_output[output_idx] = sum;
+    output[output_idx] = sum;
 }
 
 // ============================================
-// Stage 2 Kernel: Instance Norm + ReLU
+// Phase 2: InstanceNorm + ReLU Kernel
 // ============================================
 
-/*
- * Second pass: Compute instance norm statistics and apply normalization + ReLU
- *
- * Grid: One block per (batch, channel) pair
- * Each block computes mean and variance for that channel
- * Then normalizes and applies ReLU
- */
-
 template<int BLOCK_SIZE>
-__global__ void instance_norm_relu_stage2_kernel(
-    float* __restrict__ conv_output,     // [N, C_out, H_out, W_out] - modified in place
+__global__ void instance_norm_relu_kernel(
+    float* __restrict__ data,           // [N, C_out, H_out, W_out] - modified in place
     const float* __restrict__ gamma,     // [C_out]
     const float* __restrict__ beta,      // [C_out]
     int N, int C_out, int H_out, int W_out,
     float eps
 ) {
-    // Block: one per (batch, channel)
+    // Grid: One block per (batch, channel) pair
     int batch_idx = blockIdx.y;
     int channel_idx = blockIdx.x;
     int tid = threadIdx.x;
     int spatial_size = H_out * W_out;
 
     // Shared memory for reductions
-    __shared__ float s_warp_sums[32];  // Up to 32 warps
+    __shared__ float s_warp_sums[32];
     __shared__ float s_mean;
     __shared__ float s_inv_std;
 
-    // Channel offset in conv_output
+    // Channel offset in data
     int64_t channel_offset = ((int64_t)batch_idx * C_out + channel_idx) * spatial_size;
 
     // ============================================================
@@ -193,21 +166,20 @@ __global__ void instance_norm_relu_stage2_kernel(
 
     float sum = 0.0f;
     for (int i = tid; i < spatial_size; i += BLOCK_SIZE) {
-        sum += conv_output[channel_offset + i];
+        sum += data[channel_offset + i];
     }
 
     // Warp-level reduction
     sum = warp_reduce_sum(sum);
 
-    int warp_id = tid / WARP_SIZE;
     int lane_id = tid % WARP_SIZE;
 
     if (lane_id == 0) {
+        int warp_id = tid / WARP_SIZE;
         s_warp_sums[warp_id] = sum;
     }
     __syncthreads();
 
-    // Final reduction across warps
     if (tid == 0) {
         float total = 0.0f;
         int num_warps = (BLOCK_SIZE + WARP_SIZE - 1) / WARP_SIZE;
@@ -226,13 +198,14 @@ __global__ void instance_norm_relu_stage2_kernel(
 
     float var_sum = 0.0f;
     for (int i = tid; i < spatial_size; i += BLOCK_SIZE) {
-        float diff = conv_output[channel_offset + i] - mean;
+        float diff = data[channel_offset + i] - mean;
         var_sum += diff * diff;
     }
 
     var_sum = warp_reduce_sum(var_sum);
 
     if (lane_id == 0) {
+        int warp_id = tid / WARP_SIZE;
         s_warp_sums[warp_id] = var_sum;
     }
     __syncthreads();
@@ -260,170 +233,13 @@ __global__ void instance_norm_relu_stage2_kernel(
         int idx = channel_offset + i;
 
         // Normalize: (x - mean) / std
-        float normalized = (conv_output[idx] - mean) * inv_std;
+        float normalized = (data[idx] - mean) * inv_std;
 
         // Affine: gamma * x + beta
         float affine = gamma_val * normalized + beta_val;
 
         // ReLU: max(0, x)
-        conv_output[idx] = fmaxf(0.0f, affine);
-    }
-}
-
-// ============================================
-// Fused Kernel (Single Launch Version)
-// ============================================
-
-/*
- * Optimized single-kernel version that computes conv and collects stats
- * in shared memory, then applies normalization and ReLU.
- *
- * This version is more efficient as it requires only one kernel launch.
- */
-
-template<int KERNEL_SIZE, int STRIDE, int PADDING, int BLOCK_SIZE>
-__global__ void fused_conv_instance_norm_relu_kernel(
-    const float* __restrict__ input,     // [N, C_in, H, W]
-    const float* __restrict__ weight,    // [C_out, C_in, K, K]
-    const float* __restrict__ bias,      // [C_out] or nullptr
-    const float* __restrict__ gamma,     // [C_out]
-    const float* __restrict__ beta,      // [C_out]
-    float* __restrict__ output,          // [N, C_out, H_out, W_out]
-    int N, int C_in, int C_out,
-    int H, int W, int H_out, int W_out,
-    float eps
-) {
-    // Grid: One block per (batch, output_channel)
-    // Block processes all spatial positions for that channel
-
-    int batch_idx = blockIdx.y;
-    int out_channel = blockIdx.x;
-    int tid = threadIdx.x;
-    int spatial_size = H_out * W_out;
-
-    // Shared memory for:
-    // 1. Channel values (for reduction)
-    // 2. Reduction results
-    __shared__ float s_values[BLOCK_SIZE];  // Store conv results for reduction
-    __shared__ float s_warp_sums[32];
-    __shared__ float s_mean;
-    __shared__ float s_inv_std;
-
-    // Each thread computes multiple output positions
-    for (int spatial_base = 0; spatial_base < spatial_size; spatial_base += BLOCK_SIZE) {
-        int spatial_idx = spatial_base + tid;
-        float conv_val = 0.0f;
-
-        // Decompose spatial_idx to (h_out, w_out) - declare outside if block
-        int h_out = (spatial_idx < spatial_size) ? spatial_idx / W_out : 0;
-        int w_out = (spatial_idx < spatial_size) ? spatial_idx % W_out : 0;
-
-        if (spatial_idx < spatial_size) {
-            // Compute convolution for this position
-            int h_in_start = h_out * STRIDE - PADDING;
-            int w_in_start = w_out * STRIDE - PADDING;
-
-            for (int c_in = 0; c_in < C_in; c_in++) {
-                for (int kh = 0; kh < KERNEL_SIZE; kh++) {
-                    int h_in = h_in_start + kh;
-                    if (h_in < 0 || h_in >= H) continue;
-
-                    for (int kw = 0; kw < KERNEL_SIZE; kw++) {
-                        int w_in = w_in_start + kw;
-                        if (w_in < 0 || w_in >= W) continue;
-
-                        int input_idx = ((batch_idx * C_in + c_in) * H + h_in) * W + w_in;
-                        int weight_idx = ((out_channel * C_in + c_in) * KERNEL_SIZE + kh) * KERNEL_SIZE + kw;
-
-                        conv_val += input[input_idx] * weight[weight_idx];
-                    }
-                }
-            }
-
-            // Add bias
-            if (bias != nullptr) {
-                conv_val += bias[out_channel];
-            }
-        }
-
-        // Store for statistics computation
-        s_values[tid] = (spatial_idx < spatial_size) ? conv_val : 0.0f;
-        __syncthreads();
-
-        // ============================================================
-        // Compute Mean (for this channel's spatial positions)
-        // ============================================================
-
-        float sum = s_values[tid];
-        sum = warp_reduce_sum(sum);
-
-        int warp_id = tid / WARP_SIZE;
-        int lane_id = tid % WARP_SIZE;
-
-        if (lane_id == 0) {
-            s_warp_sums[warp_id] = sum;
-        }
-        __syncthreads();
-
-        if (tid == 0) {
-            float total = 0.0f;
-            int num_warps = (BLOCK_SIZE + WARP_SIZE - 1) / WARP_SIZE;
-            // Only count valid threads
-            int valid_threads = min(BLOCK_SIZE, spatial_size - spatial_base);
-            int active_warps = (valid_threads + WARP_SIZE - 1) / WARP_SIZE;
-            for (int i = 0; i < active_warps; i++) {
-                total += s_warp_sums[i];
-            }
-            s_mean = total / (float)spatial_size;
-        }
-        __syncthreads();
-
-        float mean = s_mean;
-
-        // ============================================================
-        // Compute Variance
-        // ============================================================
-
-        float diff = s_values[tid] - mean;
-        float var_sum = diff * diff;
-        var_sum = warp_reduce_sum(var_sum);
-
-        if (lane_id == 0) {
-            s_warp_sums[warp_id] = var_sum;
-        }
-        __syncthreads();
-
-        if (tid == 0) {
-            float total = 0.0f;
-            int valid_threads = min(BLOCK_SIZE, spatial_size - spatial_base);
-            int active_warps = (valid_threads + WARP_SIZE - 1) / WARP_SIZE;
-            for (int i = 0; i < active_warps; i++) {
-                total += s_warp_sums[i];
-            }
-            float variance = total / (float)spatial_size;
-            s_inv_std = rsqrtf(variance + eps);
-        }
-        __syncthreads();
-
-        float inv_std = s_inv_std;
-        float gamma_val = gamma[out_channel];
-        float beta_val = beta[out_channel];
-
-        // ============================================================
-        // Write Output: Normalize + Affine + ReLU
-        // ============================================================
-
-        if (spatial_idx < spatial_size) {
-            // Normalize
-            float normalized = (conv_val - mean) * inv_std;
-            // Affine
-            float affine = gamma_val * normalized + beta_val;
-            // ReLU
-            int output_idx = ((batch_idx * C_out + out_channel) * H_out + h_out) * W_out + w_out;
-            output[output_idx] = fmaxf(0.0f, affine);
-        }
-
-        __syncthreads();
+        data[idx] = fmaxf(0.0f, affine);
     }
 }
 
@@ -488,175 +304,60 @@ torch::Tensor fused_conv_instance_norm_relu(
     // Kernel configuration
     constexpr int BLOCK_SIZE = 256;
 
-    // Launch kernel based on kernel size, stride, and padding
-    dim3 grid(C_out, N);  // One block per (channel, batch)
+    // ============================================================
+    // Phase 1: Convolution
+    // ============================================================
 
-    // For cases with external padding (e.g., ReflectionPad2d), padding=0
-    if (K == 3 && stride == 1 && padding == 0) {
-        fused_conv_instance_norm_relu_kernel<3, 1, 0, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
-    } else if (K == 3 && stride == 2 && padding == 0) {
-        fused_conv_instance_norm_relu_kernel<3, 2, 0, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
+    int total_elements = N * C_out * H_out * W_out;
+    int num_blocks = (total_elements + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    #define LAUNCH_CONV_KERNEL(KS, S, P) \
+        conv_kernel<KS, S, P><<<num_blocks, BLOCK_SIZE>>>( \
+            input.data_ptr<float>(), \
+            weight.data_ptr<float>(), \
+            bias_ptr, \
+            output.data_ptr<float>(), \
+            N, C_in, C_out, H, W, H_out, W_out \
+        )
+
+    if (K == 1 && stride == 1 && padding == 0) {
+        LAUNCH_CONV_KERNEL(1, 1, 0);
+    } else if (K == 3 && stride == 1 && padding == 0) {
+        LAUNCH_CONV_KERNEL(3, 1, 0);
     } else if (K == 3 && stride == 1 && padding == 1) {
-        fused_conv_instance_norm_relu_kernel<3, 1, 1, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
-    } else if (K == 1 && stride == 1 && padding == 0) {
-        fused_conv_instance_norm_relu_kernel<1, 1, 0, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
+        LAUNCH_CONV_KERNEL(3, 1, 1);
+    } else if (K == 3 && stride == 2 && padding == 0) {
+        LAUNCH_CONV_KERNEL(3, 2, 0);
     } else if (K == 3 && stride == 2 && padding == 1) {
-        fused_conv_instance_norm_relu_kernel<3, 2, 1, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
-    } else if (K == 4 && stride == 2 && padding == 1) {
-        fused_conv_instance_norm_relu_kernel<4, 2, 1, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
+        LAUNCH_CONV_KERNEL(3, 2, 1);
+    } else if (K == 5 && stride == 1 && padding == 0) {
+        LAUNCH_CONV_KERNEL(5, 1, 0);
     } else if (K == 5 && stride == 1 && padding == 2) {
-        fused_conv_instance_norm_relu_kernel<5, 1, 2, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
+        LAUNCH_CONV_KERNEL(5, 1, 2);
+    } else if (K == 5 && stride == 2 && padding == 1) {
+        LAUNCH_CONV_KERNEL(5, 2, 1);
     } else if (K == 5 && stride == 2 && padding == 2) {
-        fused_conv_instance_norm_relu_kernel<5, 2, 2, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
-            input.data_ptr<float>(),
-            weight.data_ptr<float>(),
-            bias_ptr,
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            output.data_ptr<float>(),
-            N, C_in, C_out, H, W, H_out, W_out,
-            eps
-        );
+        LAUNCH_CONV_KERNEL(5, 2, 2);
     } else {
-        // Fall back to two-pass implementation for unsupported configs
-        // Stage 1: Convolution
-        int total_elements = N * C_out * H_out * W_out;
-        int num_blocks = (total_elements + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-        // Allocate intermediate buffer
-        auto conv_buffer = torch::zeros({N, C_out, H_out, W_out}, input.options());
-
-        // Launch stage 1 (generic) - loop over supported kernel sizes
-        if (K == 3 && stride == 1 && padding == 1) {
-            conv_stage1_kernel<3, 1, 1><<<num_blocks, BLOCK_SIZE>>>(
-                input.data_ptr<float>(),
-                weight.data_ptr<float>(),
-                bias_ptr,
-                conv_buffer.data_ptr<float>(),
-                N, C_in, C_out, H, W, H_out, W_out
-            );
-        } else if (K == 3 && stride == 2 && padding == 1) {
-            conv_stage1_kernel<3, 2, 1><<<num_blocks, BLOCK_SIZE>>>(
-                input.data_ptr<float>(),
-                weight.data_ptr<float>(),
-                bias_ptr,
-                conv_buffer.data_ptr<float>(),
-                N, C_in, C_out, H, W, H_out, W_out
-            );
-        } else if (K == 1 && stride == 1 && padding == 0) {
-            conv_stage1_kernel<1, 1, 0><<<num_blocks, BLOCK_SIZE>>>(
-                input.data_ptr<float>(),
-                weight.data_ptr<float>(),
-                bias_ptr,
-                conv_buffer.data_ptr<float>(),
-                N, C_in, C_out, H, W, H_out, W_out
-            );
-        } else if (K == 4 && stride == 2 && padding == 1) {
-            conv_stage1_kernel<4, 2, 1><<<num_blocks, BLOCK_SIZE>>>(
-                input.data_ptr<float>(),
-                weight.data_ptr<float>(),
-                bias_ptr,
-                conv_buffer.data_ptr<float>(),
-                N, C_in, C_out, H, W, H_out, W_out
-            );
-        } else if (K == 5 && stride == 1 && padding == 2) {
-            conv_stage1_kernel<5, 1, 2><<<num_blocks, BLOCK_SIZE>>>(
-                input.data_ptr<float>(),
-                weight.data_ptr<float>(),
-                bias_ptr,
-                conv_buffer.data_ptr<float>(),
-                N, C_in, C_out, H, W, H_out, W_out
-            );
-        } else if (K == 5 && stride == 2 && padding == 2) {
-            conv_stage1_kernel<5, 2, 2><<<num_blocks, BLOCK_SIZE>>>(
-                input.data_ptr<float>(),
-                weight.data_ptr<float>(),
-                bias_ptr,
-                conv_buffer.data_ptr<float>(),
-                N, C_in, C_out, H, W, H_out, W_out
-            );
-        } else {
-            TORCH_CHECK(false, "Unsupported kernel config: K=", K, " stride=", stride, " padding=", padding,
-                       ". Supported: K=1 (stride=1, pad=0), K=3 (stride=1/2, pad=1), K=4 (stride=2, pad=1), K=5 (stride=1/2, pad=2)");
-        }
-
-        CUDA_CHECK(cudaGetLastError());
-
-        // Stage 2: Instance Norm + ReLU
-        dim3 grid2(C_out, N);
-        instance_norm_relu_stage2_kernel<BLOCK_SIZE><<<grid2, BLOCK_SIZE>>>(
-            conv_buffer.data_ptr<float>(),
-            gamma.data_ptr<float>(),
-            beta.data_ptr<float>(),
-            N, C_out, H_out, W_out,
-            eps
-        );
-
-        output = conv_buffer;
+        TORCH_CHECK(false, "Unsupported kernel config: K=", K, " stride=", stride, " padding=", padding);
     }
+
+    #undef LAUNCH_CONV_KERNEL
+
+    CUDA_CHECK(cudaGetLastError());
+
+    // ============================================================
+    // Phase 2: Instance Norm + ReLU
+    // ============================================================
+
+    dim3 grid2(C_out, N);
+    instance_norm_relu_kernel<BLOCK_SIZE><<<grid2, BLOCK_SIZE>>>(
+        output.data_ptr<float>(),
+        gamma.data_ptr<float>(),
+        beta.data_ptr<float>(),
+        N, C_out, H_out, W_out,
+        eps
+    );
 
     CUDA_CHECK(cudaGetLastError());
 
