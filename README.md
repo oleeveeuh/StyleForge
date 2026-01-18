@@ -2,7 +2,7 @@
 
 **High-Performance Neural Style Transfer with Custom CUDA Kernels**
 
-A demonstration of advanced CUDA programming techniques for deep learning acceleration, implementing fast neural style transfer with custom kernels that achieve 3-5x speedups over PyTorch baseline operations.
+A demonstration of advanced CUDA programming techniques for deep learning acceleration, implementing fast neural style transfer with custom kernels that achieve up to 1.72× end-to-end speedup over PyTorch baseline and up to 2.07× with mixed precision.
 
 ## Executive Summary
 
@@ -21,24 +21,48 @@ The codebase is production-quality with comprehensive testing, Nsight Compute pr
 
 ## Performance Results
 
-### Kernel-Level Speedups
+*Benchmarks run on NVIDIA Tesla T4 (Compute Capability 7.5), PyTorch 2.9.0+cu126*
 
-| Kernel | Baseline (PyTorch) | Optimized | Speedup | Key Techniques |
-|--------|-------------------|-----------|---------|----------------|
-| **FusedInstanceNorm2d** | 2.1 ms | 0.6 ms | **3.5x** | Warp reduction, float4 vectorization |
-| **FusedConvINReLU** | 4.8 ms | 1.2 ms | **4.0x** | Kernel fusion, coalesced access |
-| **FusedAttentionV3** | 12.5 ms | 2.8 ms | **4.5x** | Register accumulation, online softmax |
-| **FusedFFN** | 8.3 ms | 2.1 ms | **4.0x** | Fused GELU, shared memory tiling |
+### End-to-End Model Speedup (512×512 input)
 
-*Benchmarks on NVIDIA T4 (Tensor Core), batch=4, 512x512 resolution*
+| Variant | Inference Time | FPS | Speedup vs Baseline | Description |
+|---------|---------------|-----|---------------------|-------------|
+| **TransformerNetBaseline** | 30.61 ms | 32.7 | 1.0× | Pure PyTorch (nn.Conv2d + nn.InstanceNorm2d + nn.ReLU) |
+| **TransformerNet** | 32.17 ms | 31.1 | 0.95× | FusedInstanceNorm2d (norm layer fusion) |
+| **TransformerNetFused** | 17.82 ms | 56.1 | **1.72×** | Fully fused Conv+IN+ReLU |
 
-### End-to-End Model Speedup
+> **Note:** The `TransformerNet` (auto) variant shows a slight slowdown due to JIT compilation overhead for the InstanceNorm kernel. The `TransformerNetFused` variant provides significant speedup by fusing the entire Conv+IN+ReLU sequence.
 
-| Variant | Inference Time | Speedup vs Baseline | Memory Usage |
-|---------|---------------|---------------------|--------------|
-| **TransformerNetBaseline** (pure PyTorch) | 45.2 ms | 1.0x | 8.2 GB |
-| **TransformerNet** (FusedInstanceNorm2d) | 32.1 ms | **1.4x** | 7.8 GB |
-| **TransformerNetFused** (fully fused) | 14.8 ms | **3.1x** | 6.9 GB |
+### Mixed Precision Performance (FP32 vs FP16 vs AMP)
+
+| Precision Mode | Inference Time | Speedup vs FP32 | Notes |
+|----------------|---------------|-----------------|-------|
+| **FP32 (float32)** | 30.77 ms | 1.0× | Baseline float32 |
+| **Manual FP16** | 14.83 ms | **2.07×** | Manual `.half()` conversion |
+| **PyTorch AMP** | 15.74 ms | **1.96×** | `torch.cuda.amp.autocast()` |
+
+**Production Recommendation:** Use PyTorch AMP for simpler code with minimal performance penalty (~6% slower than manual FP16). Numerical correctness validated: max difference < 0.07 vs FP32.
+
+### Kernel-Level Benchmarks
+
+#### FusedInstanceNorm2d
+
+| Config | PyTorch | Fused | Speedup |
+|--------|---------|-------|---------|
+| Small (64×64×64) | 0.28 ms | 0.11 ms | **2.46×** |
+| Medium (128×128×128) | 0.33 ms | 0.23 ms | **1.41×** |
+| Large (256×256×256) | 1.17 ms | 1.47 ms | 0.80× |
+
+> The FusedInstanceNorm2d kernel shows best performance on smaller feature maps where kernel launch overhead dominates. For large spatial dimensions, PyTorch's highly optimized cuDNN kernels are competitive.
+
+#### FusedConvInstanceNormReLU
+
+| Config | PyTorch | Fused | Speedup |
+|--------|---------|-------|---------|
+| 64→128 channels | 0.60 ms | 4.37 ms | 0.14× |
+| 128→128 channels | 1.09 ms | 14.12 ms | 0.08× |
+
+> The Conv+IN+ReLU fusion kernel is designed for 1×1 convolutions in residual blocks. The benchmark shows 3×3 convolutions where the kernel is not optimized—see the Technical Deep Dive section for recommended use cases.
 
 ---
 
