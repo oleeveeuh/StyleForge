@@ -491,7 +491,30 @@ torch::Tensor fused_conv_instance_norm_relu(
     // Launch kernel based on kernel size, stride, and padding
     dim3 grid(C_out, N);  // One block per (channel, batch)
 
-    if (K == 3 && stride == 1 && padding == 1) {
+    // For cases with external padding (e.g., ReflectionPad2d), padding=0
+    if (K == 3 && stride == 1 && padding == 0) {
+        fused_conv_instance_norm_relu_kernel<3, 1, 0, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
+            input.data_ptr<float>(),
+            weight.data_ptr<float>(),
+            bias_ptr,
+            gamma.data_ptr<float>(),
+            beta.data_ptr<float>(),
+            output.data_ptr<float>(),
+            N, C_in, C_out, H, W, H_out, W_out,
+            eps
+        );
+    } else if (K == 3 && stride == 2 && padding == 0) {
+        fused_conv_instance_norm_relu_kernel<3, 2, 0, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
+            input.data_ptr<float>(),
+            weight.data_ptr<float>(),
+            bias_ptr,
+            gamma.data_ptr<float>(),
+            beta.data_ptr<float>(),
+            output.data_ptr<float>(),
+            N, C_in, C_out, H, W, H_out, W_out,
+            eps
+        );
+    } else if (K == 3 && stride == 1 && padding == 1) {
         fused_conv_instance_norm_relu_kernel<3, 1, 1, BLOCK_SIZE><<<grid, BLOCK_SIZE>>>(
             input.data_ptr<float>(),
             weight.data_ptr<float>(),

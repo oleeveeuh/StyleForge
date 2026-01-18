@@ -502,13 +502,14 @@ class FusedConvLayer(nn.Module):
 
         # Use FusedConvInstanceNormReLU if available
         if CUDA_KERNELS_AVAILABLE and FusedConvInstanceNormReLU is not None:
+            # Pass padding=0 to fused kernel since we apply ReflectionPad2d separately
             self.fused = FusedConvInstanceNormReLU(
-                in_channels, out_channels, kernel_size, stride
+                in_channels, out_channels, kernel_size, stride, padding=0
             )
             self._use_fused = True
         else:
             # Fall back to separate layers
-            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride)
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=padding)
             self.norm = nn.InstanceNorm2d(out_channels, affine=True, track_running_stats=True)
             self.activation = nn.ReLU(inplace=True)
             self._use_fused = False
