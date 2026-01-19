@@ -29,74 +29,37 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          set -x  # Enable debug output
-
-          # Check if required variables are set
           if [ -z "$HF_TOKEN" ]; then
             echo "Error: HF_TOKEN secret is not set"
             exit 1
           fi
 
-          # Clone the existing Space (or create new)
           echo "Cloning Hugging Face Space..."
-          echo "Username: $HF_USERNAME"
-          echo "Space: $HF_SPACE_NAME"
+          echo "Space: spaces/${HF_USERNAME}/${HF_SPACE_NAME}"
 
-          # Use git credential helper instead of embedding token in URL
-          git clone "https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}" temp_space 2>&1 || {
-            echo "Clone failed. The Space might not exist yet."
-            echo "Creating the Space directory..."
-            mkdir -p temp_space
-            cd temp_space
-            git init
-            cd ..
-          }
+          git clone "https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}" temp_space
 
-          # Copy files from huggingface-space directory
           echo "Copying files..."
-          # Remove all files except .git directory
-          find temp_space -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
+          find temp_space -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
           cp -r huggingface-space/* temp_space/
-
-          # If there's a .gitignore in the source, don't copy it (Space has its own)
           rm -f temp_space/.gitignore
 
-          # Commit and push
           cd temp_space
-
-          # Configure git credentials for push
           git config credential.helper store
           echo "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co" > ~/.git-credentials
 
-          # If this is a new space, set up remote
-          if ! git remote -v | grep -q origin; then
-            git remote add origin "https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}"
-          fi
-
           git add .
-          git status
-
-          # Create commit message with info
-          COMMIT_MSG="Deploy from GitHub - $(date '+%Y-%m-%d %H:%M:%S')"
-
-          # Check if there are changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to deploy"
-          else
-            git commit -m "$COMMIT_MSG"
-            echo "Pushing to Hugging Face..."
-            git push origin main || git push -u origin main
+          if ! git diff --staged --quiet; then
+            git commit -m "Deploy from GitHub - $(date '+%Y-%m-%d %H:%M:%S')"
+            git push origin main
             echo "Deployment successful!"
-            echo "Space URL: https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}"
+          else
+            echo "No changes to deploy"
           fi
 
       - name: Deployment summary
         if: always()
         run: |
           echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Space URL:** https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Direct App:** https://${HF_USERNAME}-${HF_SPACE_NAME}.hf.space" >> $GITHUB_STEP_SUMMARY
