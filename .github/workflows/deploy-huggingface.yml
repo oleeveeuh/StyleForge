@@ -29,38 +29,26 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          set -x  # Enable debug output
+
           # Check if required variables are set
           if [ -z "$HF_TOKEN" ]; then
             echo "Error: HF_TOKEN secret is not set"
-            echo "Please add HF_TOKEN to your repository secrets"
-            echo "Get your token from: https://huggingface.co/settings/tokens"
             exit 1
           fi
-
-          if [ -z "$HF_USERNAME" ]; then
-            echo "Error: HF_USERNAME is not set"
-            exit 1
-          fi
-
-          if [ -z "$HF_SPACE_NAME" ]; then
-            echo "Error: HF_SPACE_NAME is not set"
-            exit 1
-          fi
-
-          # Build the URL safely
-          HF_REPO_URL="https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}"
-
-          echo "Cloning Hugging Face Space..."
-          echo "URL: https://${HF_USERNAME}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}"
 
           # Clone the existing Space (or create new)
-          git clone "$HF_REPO_URL" temp_space || {
+          echo "Cloning Hugging Face Space..."
+          echo "Username: $HF_USERNAME"
+          echo "Space: $HF_SPACE_NAME"
+
+          # Use git credential helper instead of embedding token in URL
+          git clone "https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}" temp_space 2>&1 || {
             echo "Clone failed. The Space might not exist yet."
             echo "Creating the Space directory..."
             mkdir -p temp_space
             cd temp_space
             git init
-            git remote add origin "$HF_REPO_URL"
             cd ..
           }
 
@@ -76,9 +64,13 @@ jobs:
           # Commit and push
           cd temp_space
 
-          # If this is a new space (no git config), set it up
+          # Configure git credentials for push
+          git config credential.helper store
+          echo "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co" > ~/.git-credentials
+
+          # If this is a new space, set up remote
           if ! git remote -v | grep -q origin; then
-            git remote add origin "$HF_REPO_URL"
+            git remote add origin "https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME}"
           fi
 
           git add .
