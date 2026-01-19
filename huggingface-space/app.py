@@ -2555,11 +2555,21 @@ with gr.Blocks(
     gr.Markdown("---")
 
     def create_example_image():
+        # Create a more interesting test image with geometric shapes
         arr = np.zeros((256, 256, 3), dtype=np.uint8)
+        # Background gradient
         for i in range(256):
-            arr[:, i, 0] = i
-            arr[:, i, 1] = 255 - i
-            arr[:, i, 2] = 128
+            arr[:, i, 0] = i // 2
+            arr[:, i, 1] = 128
+            arr[:, i, 2] = 255 - i // 2
+        # Add a circle in the center
+        cy, cx = 128, 128
+        for y in range(256):
+            for x in range(256):
+                if (x - cx)**2 + (y - cy)**2 <= 50**2:
+                    arr[y, x, 0] = 255
+                    arr[y, x, 1] = 200
+                    arr[y, x, 2] = 100
         return Image.fromarray(arr)
 
     example_img = create_example_image()
@@ -2569,12 +2579,13 @@ with gr.Blocks(
             [example_img, "candy", "auto", False, False],
             [example_img, "mosaic", "auto", False, False],
             [example_img, "rain_princess", "auto", True, False],
+            [example_img, "udnie", "auto", False, False],
         ],
         inputs=[quick_image, quick_style, quick_backend, quick_compare, quick_watermark],
         outputs=[quick_output, quick_stats, quick_download],
         fn=stylize_image,
-        cache_examples=False,
-        label="Quick Examples"
+        cache_examples=True,  # Enable caching to pre-generate styled outputs
+        label="Quick Examples (Click to see each style)"
     )
 
     # FAQ Section
