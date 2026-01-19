@@ -73,11 +73,11 @@ try:
     print("Compiling... (this may take 1-2 minutes)")
 
     # Compile the kernel
+    # Note: with_pybind11 was removed in PyTorch 2.x, it's now always enabled
     module = load_inline(
         name='fused_instance_norm',
         cuda_sources=[cuda_source],
         extra_cuda_cflags=extra_cuda_cflags,
-        with_pybind11=True,
         verbose=False
     )
 
