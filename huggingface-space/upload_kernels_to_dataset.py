@@ -79,7 +79,7 @@ def upload_kernels():
         api.create_repo(
             repo_id=DATASET_ID.split("/")[1],
             repo_type="dataset",
-            public=True,
+            private=False,
             exist_ok=True
         )
         print(f"Dataset created: {DATASET_ID}")
