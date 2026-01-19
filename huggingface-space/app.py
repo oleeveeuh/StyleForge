@@ -1483,11 +1483,9 @@ def stylize_image_impl(
         return None, error_msg, None
 
 
-# Wrap with GPU decorator for ZeroGPU if available
-if SPACES_AVAILABLE:
-    stylize_image = GPU(stylize_image_impl)
-else:
-    stylize_image = stylize_image_impl
+# Run without GPU decorator - will use available device (GPU or CPU)
+# This avoids ZeroGPU quota issues
+stylize_image = stylize_image_impl
 
 
 def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.Image:
