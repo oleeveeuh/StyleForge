@@ -473,7 +473,8 @@ class TransformerNet(nn.Module):
 
     def load_checkpoint(self, checkpoint_path: str) -> None:
         """Load pre-trained weights from checkpoint file."""
-        state_dict = torch.load(checkpoint_path, map_location=next(self.parameters()).device)
+        # Load to CPU first for reliability, then move to device
+        state_dict = torch.load(checkpoint_path, map_location='cpu')
 
         if 'state_dict' in state_dict:
             state_dict = state_dict['state_dict']
