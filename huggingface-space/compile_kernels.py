@@ -73,9 +73,10 @@ try:
     print("Compiling... (this may take 1-2 minutes)")
 
     # Compile the kernel
-    # Note: with_pybind11 was removed in PyTorch 2.x, it's now always enabled
+    # Note: PyTorch 2.x requires cpp_sources even if empty (bindings are in CUDA)
     module = load_inline(
         name='fused_instance_norm',
+        cpp_sources=[],  # Empty since bindings are in the .cu file
         cuda_sources=[cuda_source],
         extra_cuda_cflags=extra_cuda_cflags,
         verbose=False
