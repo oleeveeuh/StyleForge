@@ -513,15 +513,13 @@ class TransformerNet(nn.Module):
             if not mapped:
                 mapped_state_dict[name] = v
 
-        # Map .weight/.bias to .gamma/.beta for InstanceNorm
+        # Filter out running_mean and running_var (BatchNorm params not needed for InstanceNorm)
+        # Keep .weight and .bias as-is since InstanceNorm uses these names
         final_state_dict = {}
         for key, value in mapped_state_dict.items():
-            if key.endswith('.norm.weight'):
-                final_state_dict[key[:-6] + 'gamma'] = value
-            elif key.endswith('.norm.bias'):
-                final_state_dict[key[:-5] + '.beta'] = value
-            else:
-                final_state_dict[key] = value
+            if key.endswith('.running_mean') or key.endswith('.running_var'):
+                continue  # Skip BatchNorm-specific parameters
+            final_state_dict[key] = value
 
         self.load_state_dict(final_state_dict, strict=False)
 
