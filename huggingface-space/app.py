@@ -2747,7 +2747,7 @@ with gr.Blocks(
 
     # Benchmark handlers
     run_benchmark_btn.click(
-        fn=lambda s: (create_benchmark_comparison(s), refresh_styles_btn.click(),),
+        fn=create_benchmark_comparison,
         inputs=[benchmark_style],
         outputs=[benchmark_chart]
     )
