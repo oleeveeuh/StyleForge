@@ -2,7 +2,7 @@
 StyleForge CUDA Kernels Package
 Custom CUDA kernels for accelerated neural style transfer.
 
-For ZeroGPU: Pre-compiled kernels are loaded from prebuilt/.
+For ZeroGPU/HuggingFace: Pre-compiled kernels are downloaded from HF dataset.
 For local: Kernels are JIT-compiled if prebuilt not available.
 """
 
@@ -15,11 +15,59 @@ _CUDA_KERNELS_AVAILABLE = False
 _FusedInstanceNorm2d = None
 _KERNELS_COMPILED = False
 
-# Check if running on ZeroGPU
-_ZERO_GPU = os.environ.get('SPACE_ID', '').startswith('hf.co') or os.environ.get('ZERO_GPU') == '1'
+# Check if running on ZeroGPU/HuggingFace
+_ZERO_GPU = os.environ.get('SPACE_ID', '') or os.environ.get('ZERO_GPU') == '1'
 
 # Path to pre-compiled kernels
 _PREBUILT_PATH = Path(__file__).parent / "prebuilt"
+_PREBUILT_PATH.mkdir(exist_ok=True)
+
+# HuggingFace dataset for prebuilt kernels
+_KERNEL_DATASET = "oliau/styleforge-kernels"  # You'll need to create this dataset
+
+
+def _download_kernels_from_dataset():
+    """Download pre-compiled kernels from HuggingFace dataset."""
+    try:
+        from huggingface_hub import hf_hub_download, HfFileSystem
+        fs = HfFileSystem()
+
+        # List all .so and .pyd files in the dataset
+        kernel_files = []
+        try:
+            files = fs.ls(f"datasets/{_KERNEL_DATASET}")
+            for f in files:
+                if f['name'].endswith(('.so', '.pyd')):
+                    kernel_files.append(Path(f['name']).name)
+        except Exception:
+            # Dataset might not exist yet
+            return False
+
+        if not kernel_files:
+            return False
+
+        # Download each kernel file
+        for kernel_file in kernel_files:
+            try:
+                local_path = hf_hub_download(
+                    repo_id=_KERNEL_DATASET,
+                    filename=kernel_file,
+                    repo_type="dataset",
+                    local_dir=str(_PREBUILT_PATH.parent),
+                    local_dir_use_symlinks=False
+                )
+                print(f"Downloaded kernel: {kernel_file}")
+            except Exception as e:
+                print(f"Failed to download {kernel_file}: {e}")
+                continue
+
+        return True
+    except ImportError:
+        print("huggingface_hub not available, skipping kernel download")
+        return False
+    except Exception as e:
+        print(f"Failed to download kernels from dataset: {e}")
+        return False
 
 
 def check_cuda_kernels():
@@ -46,6 +94,7 @@ def get_fused_instance_norm(num_features, **kwargs):
 def load_prebuilt_kernels():
     """
     Try to load pre-compiled CUDA kernels from prebuilt/ directory.
+    On HuggingFace, downloads from dataset if local files not found.
 
     Returns True if successful, False otherwise.
     """
@@ -54,10 +103,18 @@ def load_prebuilt_kernels():
     if _KERNELS_COMPILED:
         return _CUDA_KERNELS_AVAILABLE
 
-    # Check if prebuilt kernels exist
+    # Check if prebuilt kernels exist locally
     prebuilt_files = list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
+
+    # On HuggingFace Spaces, try downloading from dataset if not found locally
+    if not prebuilt_files and _ZERO_GPU:
+        print("No local pre-compiled kernels found. Trying HuggingFace dataset...")
+        if _download_kernels_from_dataset():
+            # Check again after download
+            prebuilt_files = list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
+
     if not prebuilt_files:
-        print("No pre-compiled kernels found in prebuilt/")
+        print("No pre-compiled kernels found")
         return False
 
     try:
