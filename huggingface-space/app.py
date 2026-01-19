@@ -2487,7 +2487,6 @@ with gr.Blocks(
 
                     webcam_stream = gr.Image(
                         sources=["webcam"],
-                        streaming=True,
                         label="Webcam Feed",
                         height=400
                     )
@@ -2498,9 +2497,8 @@ with gr.Blocks(
 
                 with gr.Column(scale=1):
                     webcam_output = gr.Image(
-                        label="Stylized Output (Live)",
-                        height=400,
-                        streaming=True
+                        label="Stylized Output",
+                        height=400
                     )
 
                     webcam_stats = gr.Markdown(
@@ -2769,8 +2767,9 @@ with gr.Blocks(
         outputs=[blend_style2]
     )
 
-    # Webcam handlers
-    webcam_stream.stream(
+    # Webcam handlers - note: streaming disabled for Gradio 5.x compatibility
+    # Users can still upload/process webcam images manually
+    webcam_stream.change(
         fn=process_webcam_frame,
         inputs=[webcam_stream, webcam_style, webcam_backend],
         outputs=[webcam_output],
@@ -2800,8 +2799,7 @@ with gr.Blocks(
 
 if __name__ == "__main__":
     demo.launch(
-        # Required for HuggingFace Spaces deployment
-        share=True,
-        # Explicitly enable API for Gradio 5.x compatibility
-        show_api=True
+        # share=True is not supported on HuggingFace Spaces
+        # show_api=True can cause issues with some gradio_client versions
+        show_api=False
     )
