@@ -34,6 +34,8 @@ Thumbs.db
 gradio_cached_examples/
 flagged/
 
-# Pre-built kernels (not supported by Hugging Face - use compilation on HF or Git LFS)
-kernels/prebuilt/
+# Pre-built kernels (allowed locally, removed by deploy workflow for HF)
+# The workflow removes these before pushing to Hugging Face to avoid binary rejection
+!kernels/prebuilt/*.so
+!kernels/prebuilt/*.pyd
 
