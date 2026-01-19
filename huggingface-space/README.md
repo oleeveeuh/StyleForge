@@ -8,6 +8,7 @@ sdk_version: 4.20.0
 app_file: app.py
 pinned: false
 license: mit
+hardware: t4-small
 ---
 
 # StyleForge: Real-Time Neural Style Transfer

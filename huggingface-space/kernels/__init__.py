@@ -15,8 +15,8 @@ _CUDA_KERNELS_AVAILABLE = False
 _FusedInstanceNorm2d = None
 _KERNELS_COMPILED = False
 
-# Check if running on ZeroGPU/HuggingFace
-_ZERO_GPU = os.environ.get('SPACE_ID', '') or os.environ.get('ZERO_GPU') == '1'
+# Check if running on HuggingFace Spaces
+_HUGGINGFACE_SPACE = os.environ.get('SPACE_ID', '') != ''
 
 # Path to pre-compiled kernels
 _PREBUILT_PATH = Path(__file__).parent / "prebuilt"
@@ -107,7 +107,7 @@ def load_prebuilt_kernels():
     prebuilt_files = list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
 
     # On HuggingFace Spaces, try downloading from dataset if not found locally
-    if not prebuilt_files and _ZERO_GPU:
+    if not prebuilt_files and _HUGGINGFACE_SPACE:
         print("No local pre-compiled kernels found. Trying HuggingFace dataset...")
         if _download_kernels_from_dataset():
             # Check again after download
@@ -187,9 +187,9 @@ def compile_kernels():
         print("Using pre-compiled CUDA kernels!")
         return True
 
-    # Fall back to JIT compilation (only on local, not ZeroGPU)
-    if _ZERO_GPU:
-        print("ZeroGPU mode: No pre-compiled kernels found, using PyTorch fallback")
+    # Fall back to JIT compilation (only on local, not on HuggingFace)
+    if _HUGGINGFACE_SPACE:
+        print("HuggingFace Space: No pre-compiled kernels found, using PyTorch fallback")
         _KERNELS_COMPILED = True
         return False
 
@@ -211,15 +211,15 @@ def compile_kernels():
         return False
 
 
-# Auto-compile on import for non-ZeroGPU environments with CUDA
-if torch.cuda.is_available() and not _ZERO_GPU:
+# Auto-compile on import for local environments with CUDA
+if torch.cuda.is_available() and not _HUGGINGFACE_SPACE:
     compile_kernels()
-elif _ZERO_GPU:
-    # On ZeroGPU, try prebuilt kernels
+elif _HUGGINGFACE_SPACE:
+    # On HuggingFace, try prebuilt kernels (will download from dataset if needed)
     if load_prebuilt_kernels():
-        print("ZeroGPU: Using pre-compiled CUDA kernels!")
+        print("Using pre-compiled CUDA kernels from dataset!")
     else:
-        print("ZeroGPU: No pre-compiled kernels, using PyTorch GPU fallback")
+        print("No pre-compiled kernels, using PyTorch GPU fallback")
 
 
 __all__ = [

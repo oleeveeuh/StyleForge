@@ -37,13 +37,9 @@ except ImportError:
     PLOTLY_AVAILABLE = False
     print("Plotly not available, charts will be disabled")
 
-# Try to import spaces for ZeroGPU support
-try:
-    from spaces import GPU
-    SPACES_AVAILABLE = True
-except ImportError:
-    SPACES_AVAILABLE = False
-    print("HuggingFace spaces not available (running locally)")
+# HuggingFace Spaces support (using persistent GPU, not ZeroGPU)
+SPACES_AVAILABLE = os.environ.get('SPACE_ID', '') != ''
+print(f"HuggingFace Space: {'Yes' if SPACES_AVAILABLE else 'No (running locally)'}")
 
 # Try to import rembg for AI-based background/foreground segmentation
 try:
@@ -66,28 +62,13 @@ except ImportError:
 # Configuration
 # ============================================================================
 
-# For ZeroGPU: Don't initialize CUDA at module level
-# Device will be determined when needed within GPU tasks
-_SPACES_ZERO_GPU = SPACES_AVAILABLE  # From spaces import above
-
-# Lazy device initialization for ZeroGPU compatibility
-_device_cache = None
+# Device configuration (persistent GPU, not ZeroGPU)
+_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def get_device():
-    """
-    Get the current device (lazy-loaded on ZeroGPU).
-
-    On ZeroGPU, this must be called within a GPU task context to properly
-    initialize CUDA. Calling this at module level will cause errors.
-    """
-    global _device_cache
-    if _device_cache is None:
-        if torch.cuda.is_available():
-            _device_cache = torch.device('cuda')
-        else:
-            _device_cache = torch.device('cpu')
-    return _device_cache
+    """Get the current device."""
+    return _device
 
 
 # For backwards compatibility, keep DEVICE as a property
@@ -95,33 +76,27 @@ class _DeviceProperty:
     """Property that returns the actual device when accessed."""
 
     def __str__(self):
-        return str(get_device())
+        return str(_device)
 
     def __repr__(self):
-        return repr(get_device())
+        return repr(_device)
 
     @property
     def type(self):
-        return get_device().type
+        return _device.type
 
     def __eq__(self, other):
-        return str(get_device()) == str(other)
+        return str(_device) == str(other)
 
 
 DEVICE = _DeviceProperty()
 
-if _SPACES_ZERO_GPU:
-    print(f"Device: Will use CUDA within GPU tasks (ZeroGPU mode)")
-else:
-    # Only access device if not ZeroGPU to avoid CUDA init
-    print(f"Device: {get_device()}")
-if SPACES_AVAILABLE:
-    print("ZeroGPU support enabled")
+print(f"Device: {_device.type.upper()}")
 
 # Check CUDA kernels availability
 try:
     from kernels import check_cuda_kernels, get_fused_instance_norm, load_prebuilt_kernels
-    # On ZeroGPU: Uses pre-compiled kernels from prebuilt/ if available
+    # On HuggingFace: Downloads pre-compiled kernels from dataset
     # On local: JIT compiles kernels if prebuilt not found
     CUDA_KERNELS_AVAILABLE = check_cuda_kernels()
     if SPACES_AVAILABLE:
@@ -294,7 +269,7 @@ class VGGFeatureExtractor(nn.Module):
 _vgg_extractor = None
 
 def get_vgg_extractor():
-    """Lazy load VGG feature extractor (with ZeroGPU support)"""
+    """Lazy load VGG feature extractor."""
     global _vgg_extractor
     if _vgg_extractor is None:
         _vgg_extractor = VGGFeatureExtractor().to(get_device())
@@ -580,10 +555,7 @@ def load_model(style: str, backend: str = 'auto') -> TransformerNet:
 print("=" * 50)
 print("StyleForge - Initializing...")
 print("=" * 50)
-if _SPACES_ZERO_GPU:
-    print("Device: CUDA (ZeroGPU mode - lazy initialization)")
-else:
-    print(f"Device: {get_device().type.upper()}")
+print(f"Device: {get_device().type.upper()}")
 
 if SPACES_AVAILABLE:
     status = "Pre-compiled" if CUDA_KERNELS_AVAILABLE else "PyTorch GPU fallback"
@@ -591,18 +563,15 @@ if SPACES_AVAILABLE:
 else:
     print(f"CUDA Kernels: {'Available' if CUDA_KERNELS_AVAILABLE else 'Not Available (using PyTorch fallback)'}")
 
-# Skip model preloading on ZeroGPU to avoid CUDA init in main process
-if not _SPACES_ZERO_GPU:
-    print("Preloading models...")
-    for style in STYLES.keys():
-        try:
-            load_model(style, 'auto')
-            print(f"  {STYLES[style]}: Ready")
-        except Exception as e:
-            print(f"  {STYLES[style]}: Failed - {e}")
-    print("All models loaded!")
-else:
-    print("ZeroGPU mode: Models will be loaded on-demand within GPU tasks")
+# Preload models for faster inference
+print("Preloading models...")
+for style in STYLES.keys():
+    try:
+        load_model(style, 'auto')
+        print(f"  {STYLES[style]}: Ready")
+    except Exception as e:
+        print(f"  {STYLES[style]}: Failed - {e}")
+print("All models loaded!")
 
 print("=" * 50)
 
@@ -1483,11 +1452,8 @@ def stylize_image_impl(
         return None, error_msg, None
 
 
-# Wrap with GPU decorator for ZeroGPU if available
-if SPACES_AVAILABLE:
-    stylize_image = GPU(stylize_image_impl)
-else:
-    stylize_image = stylize_image_impl
+# Use the implementation directly (persistent GPU, no ZeroGPU decorator needed)
+stylize_image = stylize_image_impl
 
 
 def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.Image:
