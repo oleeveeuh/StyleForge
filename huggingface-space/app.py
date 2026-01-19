@@ -2169,39 +2169,6 @@ with gr.Blocks(
         secondary_hue="purple",
         font=gr.themes.GoogleFont("Inter"),
         radius_size="lg",
-    ).set(
-        # Dark theme colors for glass effect
-        body_background_fill="*background_fill_primary",
-        background_fill_primary="rgba(15, 12, 41, 0.6)",
-        background_fill_secondary="rgba(255, 255, 255, 0.05)",
-        block_background_fill="rgba(255, 255, 255, 0.05)",
-        block_border_width="1px",
-        block_border_color="rgba(255, 255, 255, 0.1)",
-        button_primary_background_fill="linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        button_primary_background_fill_hover="linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
-        button_primary_text_color="white",
-        button_primary_border_color="rgba(255, 255, 255, 0.2)",
-        button_secondary_background_fill="rgba(255, 255, 255, 0.1)",
-        button_secondary_background_fill_hover="rgba(255, 255, 255, 0.2)",
-        button_secondary_text_color="rgba(255, 255, 255, 0.9)",
-        button_secondary_border_color="rgba(255, 255, 255, 0.15)",
-        # Text colors
-        body_text_color="rgba(255, 255, 255, 0.85)",
-        body_text_color_subdued="rgba(255, 255, 255, 0.6)",
-        # Input colors
-        input_background_fill="rgba(255, 255, 255, 0.08)",
-        input_background_fill_hover="rgba(255, 255, 255, 0.12)",
-        input_background_fill_focus="rgba(255, 255, 255, 0.15)",
-        input_border_color="rgba(255, 255, 255, 0.15)",
-        input_border_color_focus="#667eea",
-        # Slider colors
-        slider_color="#667eea",
-        # Block shadows for glass depth
-        block_shadow="0 4px 30px rgba(0, 0, 0, 0.1)",
-        block_title_text_color="rgba(255, 255, 255, 0.95)",
-        # Header colors
-        header_background_fill="rgba(255, 255, 255, 0.03)",
-        header_background_fill_dark="rgba(255, 255, 255, 0.03)",
     ),
     css=custom_css
 ) as demo:
