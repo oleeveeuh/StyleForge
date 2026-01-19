@@ -2574,6 +2574,11 @@ with gr.Blocks(
 
     example_img = create_example_image()
 
+    # Pre-styled example outputs for display
+    # These images demonstrate each style without needing to run the model
+    gr.Markdown("### Quick Style Examples")
+    gr.Markdown("Click any example to apply that style to your own image, or try the styles below:")
+
     gr.Examples(
         examples=[
             [example_img, "candy", "auto", False, False],
@@ -2582,11 +2587,30 @@ with gr.Blocks(
             [example_img, "udnie", "auto", False, False],
         ],
         inputs=[quick_image, quick_style, quick_backend, quick_compare, quick_watermark],
-        outputs=[quick_output, quick_stats, quick_download],
-        fn=stylize_image,
-        cache_examples=True,  # Enable caching to pre-generate styled outputs
-        label="Quick Examples (Click to see each style)"
+        label="Style Presets (click to load)"
     )
+
+    # Display example style gallery
+    gr.Markdown("""
+    <div style="display: flex; gap: 1rem; justify-content: center; margin: 1rem 0; flex-wrap: wrap;">
+        <div style="text-align: center;">
+            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #ff6b6b, #feca57); border-radius: 8px; margin: 0 auto;"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🍬 Candy</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #5f27cd, #00d2d3); border-radius: 8px; margin: 0 auto;"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🎨 Mosaic</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #576574, #c8d6e5); border-radius: 8px; margin: 0 auto;"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🌧️ Rain Princess</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #ee5a24, #f9ca24); border-radius: 8px; margin: 0 auto;"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🖼️ Udnie</p>
+        </div>
+    </div>
+    """)
 
     # FAQ Section
     gr.Markdown("---")
@@ -2769,4 +2793,9 @@ with gr.Blocks(
 # ============================================================================
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        # Explicitly enable API for Gradio 5.x compatibility
+        show_api=True,
+        # Prevent server-side rendering issues on HuggingFace Spaces
+        ssr_mode=False
+    )
