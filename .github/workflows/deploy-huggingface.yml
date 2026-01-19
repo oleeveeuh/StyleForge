@@ -55,7 +55,7 @@ jobs:
           git status
 
           # Create commit message with info
-          COMMIT_MSG="Deploy from GitHub - $(date '+%Y-%m-%d %H:%M:%S')
+          COMMIT_MSG="Deploy from GitHub - $(date '+%Y-%m-%d %H:%M:%S')"
 
           # Check if there are changes to commit
           if git diff --staged --quiet; then
