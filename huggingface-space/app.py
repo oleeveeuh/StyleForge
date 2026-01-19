@@ -1733,92 +1733,475 @@ def create_style_blend_output(
 # ============================================================================
 
 custom_css = """
-.gradio-container {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    max-width: 1400px;
-    margin: auto;
+/* ============================================
+   LIQUID GLASS / GLASSMORPHISM THEME
+   ============================================ */
+
+/* Root variables for glass theme */
+:root {
+    --glass-bg: rgba(255, 255, 255, 0.12);
+    --glass-border: rgba(255, 255, 255, 0.2);
+    --glass-shadow: rgba(0, 0, 0, 0.1);
+    --glass-blur: blur(20px);
+    --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+    --accent-glow: rgba(102, 126, 234, 0.4);
 }
 
+/* Animated gradient background */
+body {
+    background: linear-gradient(-45deg, #0f0c29, #302b63, #24243e, #0f0c29);
+    background-size: 400% 400%;
+    animation: gradientShift 15s ease infinite;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+}
+
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* Main container with glass effect */
+.gradio-container {
+    max-width: 1400px;
+    margin: auto;
+    background: rgba(15, 12, 41, 0.6) !important;
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    overflow: hidden;
+}
+
+/* Glass panels for components */
+.gr-box {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1) !important;
+}
+
+.gr-image-container {
+    border-radius: 16px !important;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Primary button - liquid glass effect */
 .gr-button-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-    border: none !important;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.8) 0%, rgba(118, 75, 162, 0.8) 100%) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
     color: white !important;
     font-weight: 600 !important;
-    transition: all 0.3s ease !important;
+    border-radius: 14px !important;
+    padding: 12px 24px !important;
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.gr-button-primary::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    transition: left 0.5s;
+}
+
+.gr-button-primary:hover::before {
+    left: 100%;
 }
 
 .gr-button-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4) !important;
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 12px 40px rgba(102, 126, 234, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
 
+.gr-button-primary:active {
+    transform: translateY(-1px) scale(0.98);
+}
+
+/* Secondary button */
 .gr-button-secondary {
-    background: #f3f4f6 !important;
-    color: #374151 !important;
-    border: 1px solid #e5e7eb !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+    border-radius: 14px !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1) !important;
 }
 
+.gr-button-secondary:hover {
+    background: rgba(255, 255, 255, 0.2) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Dropdown styling */
+.gr-dropdown {
+    background: rgba(255, 255, 255, 0.08) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 12px !important;
+}
+
+.gr-dropdown-options {
+    background: rgba(30, 30, 60, 0.95) !important;
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px !important;
+}
+
+/* Slider styling */
+input[type="range"] {
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    height: 8px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Radio buttons */
+.gr-radio {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px !important;
+    padding: 12px !important;
+}
+
+.gr-radio:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Tab styling */
+.tabs {
+    background: rgba(255, 255, 255, 0.05) !important;
+    backdrop-filter: blur(10px);
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding: 8px !important;
+}
+
+.tab-item {
+    background: transparent !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
+}
+
+.tab-item:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.tab-item.selected {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.4), rgba(118, 75, 162, 0.4)) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+/* Accordion styling */
+details {
+    background: rgba(255, 255, 255, 0.05) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 16px !important;
+    overflow: hidden;
+}
+
+summary {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+summary:hover {
+    background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Headings with gradient text */
 h1 {
     text-align: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    font-weight: 800;
+    font-size: 2.5rem;
+    letter-spacing: -0.02em;
+    text-shadow: 0 0 40px rgba(102, 126, 234, 0.3);
 }
 
+h2, h3 {
+    color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Markdown text color */
+.markdown {
+    color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.markdown strong {
+    color: rgba(255, 255, 255, 1) !important;
+}
+
+/* Live badge with glow */
 .live-badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    padding: 6px 16px;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.8), rgba(220, 38, 38, 0.8));
+    backdrop-filter: blur(10px);
     color: white;
     border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
-    animation: pulse 2s infinite;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    animation: pulse-glow 2s infinite;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
 }
 
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
+@keyframes pulse-glow {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+    }
+    50% {
+        opacity: 0.85;
+        box-shadow: 0 4px 30px rgba(239, 68, 68, 0.6);
+    }
 }
 
+/* Backend badge with glass effect */
 .backend-badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    padding: 6px 16px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.8), rgba(5, 150, 105, 0.8));
+    backdrop-filter: blur(10px);
     color: white;
     border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
 }
 
+/* Checkbox styling */
+.gr-checkbox {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 8px !important;
+}
+
+/* Text input / Textbox */
+.gr-textbox, .gr-text-input {
+    background: rgba(255, 255, 255, 0.08) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 12px !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.gr-textbox:focus, .gr-text-input:focus {
+    border-color: rgba(102, 126, 234, 0.5) !important;
+    box-shadow: 0 0 20px rgba(102, 126, 234, 0.2) !important;
+}
+
+/* Footer */
 .footer {
     text-align: center;
     margin-top: 2rem;
-    padding-top: 1rem;
-    border-top: 1px solid #eee;
-    color: #666;
+    padding: 1.5rem;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.footer a {
+    color: #667eea !important;
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.footer a:hover {
+    color: #f093fb !important;
+}
+
+/* Info/Stats boxes */
+.gr-markdown {
+    background: rgba(255, 255, 255, 0.05) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 16px !important;
+    padding: 20px !important;
+}
+
+.gr-markdown blockquote {
+    border-left: 3px solid #667eea !important;
+    background: rgba(102, 126, 234, 0.1) !important;
+    padding: 12px 16px !important;
+    border-radius: 8px !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 10px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #764ba2, #f093fb);
+}
+
+/* Example cards */
+.gr-example {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
+}
+
+.gr-example:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.2) !important;
+}
+
+/* Floating orbs for extra visual interest */
+.gradio-container::before,
+.gradio-container::after {
+    content: '';
+    position: absolute;
+    width: 300px;
+    height: 300px;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.3;
+    pointer-events: none;
+    z-index: -1;
+}
+
+.gradio-container::before {
+    background: #667eea;
+    top: -100px;
+    left: -100px;
+    animation: float1 8s ease-in-out infinite;
+}
+
+.gradio-container::after {
+    background: #f093fb;
+    bottom: -100px;
+    right: -100px;
+    animation: float2 10s ease-in-out infinite;
+}
+
+@keyframes float1 {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(30px, 30px); }
+}
+
+@keyframes float2 {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(-30px, -30px); }
 }
 
 /* Mobile optimization */
 @media (max-width: 768px) {
     .gradio-container {
         padding: 1rem 0.5rem !important;
+        border-radius: 16px !important;
     }
+
     .gr-row {
         flex-direction: column !important;
     }
+
     .gr-column {
         width: 100% !important;
+    }
+
+    h1 {
+        font-size: 1.8rem;
+    }
+
+    .gr-button-primary {
+        padding: 10px 20px !important;
     }
 }
 """
 
 with gr.Blocks(
     title="StyleForge: Neural Style Transfer",
-    theme=gr.themes.Soft(
+    theme=gr.themes.Base(
         primary_hue="indigo",
         secondary_hue="purple",
+        font=gr.themes.GoogleFont("Inter"),
+        radius_size="lg",
+    ).set(
+        # Dark theme colors for glass effect
+        body_background_fill="*background_fill_primary",
+        background_fill_primary="rgba(15, 12, 41, 0.6)",
+        background_fill_secondary="rgba(255, 255, 255, 0.05)",
+        block_background_fill="rgba(255, 255, 255, 0.05)",
+        block_border_width="1px",
+        block_border_color="rgba(255, 255, 255, 0.1)",
+        button_primary_background_fill="linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        button_primary_background_fill_hover="linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
+        button_primary_text_color="white",
+        button_primary_border_color="rgba(255, 255, 255, 0.2)",
+        button_secondary_background_fill="rgba(255, 255, 255, 0.1)",
+        button_secondary_background_fill_hover="rgba(255, 255, 255, 0.2)",
+        button_secondary_text_color="rgba(255, 255, 255, 0.9)",
+        button_secondary_border_color="rgba(255, 255, 255, 0.15)",
+        # Text colors
+        body_text_color="rgba(255, 255, 255, 0.85)",
+        body_text_color_subdued="rgba(255, 255, 255, 0.6)",
+        # Input colors
+        input_background_fill="rgba(255, 255, 255, 0.08)",
+        input_background_fill_hover="rgba(255, 255, 255, 0.12)",
+        input_background_fill_focus="rgba(255, 255, 255, 0.15)",
+        input_border_color="rgba(255, 255, 255, 0.15)",
+        input_border_color_focus="#667eea",
+        # Slider colors
+        slider_color="#667eea",
+        # Block shadows for glass depth
+        block_shadow="0 4px 30px rgba(0, 0, 0, 0.1)",
+        block_title_text_color="rgba(255, 255, 255, 0.95)",
+        # Header colors
+        header_background_fill="rgba(255, 255, 255, 0.03)",
+        header_background_fill_dark="rgba(255, 255, 255, 0.03)",
     ),
     css=custom_css
 ) as demo:
@@ -1826,15 +2209,14 @@ with gr.Blocks(
     # Header with CUDA badge and dev notice
     cuda_badge = f"<span class='backend-badge'>CUDA Available</span>" if CUDA_KERNELS_AVAILABLE else ""
     gr.Markdown(f"""
-    # StyleForge 🚧
-
-    ### *Currently in Development*
-
-    ### Real-time neural style transfer with custom CUDA kernels.
-
-    {cuda_badge}
-
-    **Features:** Custom Styles • Region Transfer • Style Blending • Performance Charts
+    <div style="text-align: center; padding: 20px;">
+        <h1 style="font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-shadow: 0 0 60px rgba(102, 126, 234, 0.5);">StyleForge</h1>
+        <p style="color: rgba(255, 255, 255, 0.7); font-size: 1.1rem; margin-bottom: 1rem;">✨ Neural Style Transfer with Custom CUDA Kernels ✨</p>
+        {cuda_badge}
+        <p style="color: rgba(255, 255, 255, 0.6); margin-top: 1rem;">
+            <strong style="color: rgba(255, 255, 255, 0.9)">Features:</strong> Custom Styles • Region Transfer • Style Blending • Real-time Processing
+        </p>
+    </div>
     """)
 
     # Mode selector
