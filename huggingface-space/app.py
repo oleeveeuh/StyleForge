@@ -1603,7 +1603,7 @@ def refresh_styles_list():
 
     # Update dropdown choices
     choices = style_list
-    return gr.Dropdown(choices=choices, value=choices[0] if choices else 'candy')
+    return gr.update(choices=choices, value=choices[0] if choices else 'candy')
 
 
 def get_style_description(style: str) -> str:
@@ -2717,12 +2717,18 @@ with gr.Blocks(
     )
 
     # Style blending handlers
+    def update_blend_info(style1: str, style2: str, ratio: float) -> str:
+        s1_name = STYLES.get(style1, style1)
+        s2_name = STYLES.get(style2, style2)
+        return f"Blended {s1_name} × {ratio:.0f}% + {s2_name} × {100-ratio:.0f}%"
+
     blend_btn.click(
         fn=create_style_blend_output,
         inputs=[blend_image, blend_style1, blend_style2, blend_ratio, blend_backend],
         outputs=[blend_output]
     ).then(
-        lambda: gr.Markdown(f"Blended {STYLES[blend_style1.value]} × {blend_ratio.value}% + {STYLES[blend_style2.value]} × {100-blend_ratio.value}%"),
+        fn=update_blend_info,
+        inputs=[blend_style1, blend_style2, blend_ratio],
         outputs=[blend_info]
     )
 
@@ -2753,13 +2759,13 @@ with gr.Blocks(
     )
 
     refresh_styles_btn.click(
-        fn=lambda: gr.Dropdown(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0]),
+        fn=lambda: gr.update(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0] if STYLES.keys() else None),
         outputs=[quick_style]
     ).then(
-        lambda: gr.Dropdown(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0]),
+        fn=lambda: gr.update(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0] if STYLES.keys() else None),
         outputs=[blend_style1]
     ).then(
-        lambda: gr.Dropdown(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0]),
+        fn=lambda: gr.update(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0] if STYLES.keys() else None),
         outputs=[blend_style2]
     )
 
@@ -2794,8 +2800,8 @@ with gr.Blocks(
 
 if __name__ == "__main__":
     demo.launch(
+        # Required for HuggingFace Spaces deployment
+        share=True,
         # Explicitly enable API for Gradio 5.x compatibility
-        show_api=True,
-        # Prevent server-side rendering issues on HuggingFace Spaces
-        ssr_mode=False
+        show_api=True
     )
