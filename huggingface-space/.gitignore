@@ -37,3 +37,4 @@ flagged/
 # BUT allow pre-compiled kernels in prebuilt/
 !kernels/prebuilt/*.so
 !kernels/prebuilt/*.pyd
+
