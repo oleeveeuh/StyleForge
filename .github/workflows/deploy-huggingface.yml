@@ -9,7 +9,7 @@ on:
 
 env:
   HF_SPACE_NAME: styleforge
-  HF_USERNAME: olivialiau
+  HF_USERNAME: oliau
 
 jobs:
   deploy:
