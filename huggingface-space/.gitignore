@@ -34,7 +34,6 @@ Thumbs.db
 gradio_cached_examples/
 flagged/
 
-# BUT allow pre-compiled kernels in prebuilt/
-!kernels/prebuilt/*.so
-!kernels/prebuilt/*.pyd
+# Pre-built kernels (not supported by Hugging Face - use compilation on HF or Git LFS)
+kernels/prebuilt/
 

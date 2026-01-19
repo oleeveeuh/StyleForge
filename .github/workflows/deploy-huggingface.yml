@@ -44,6 +44,9 @@ jobs:
           cp -r huggingface-space/* temp_space/
           rm -f temp_space/.gitignore
 
+          # Remove prebuilt binaries (HF will compile or has its own)
+          rm -rf temp_space/kernels/prebuilt
+
           cd temp_space
           git config credential.helper store
           echo "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co" > ~/.git-credentials
