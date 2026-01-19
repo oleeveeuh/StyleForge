@@ -1,0 +1,24 @@
+# Core dependencies for StyleForge Hugging Face Space
+torch>=2.0.0
+torchvision>=0.15.0
+gradio==4.20.0
+huggingface_hub==0.20.0
+spaces
+Pillow>=9.5.0
+numpy>=1.24.0
+
+# For CUDA kernel compilation
+ninja>=1.10.0
+
+# For performance charts
+plotly>=5.0.0
+
+# Optional but recommended
+python-multipart>=0.0.6
+
+# AI Segmentation
+rembg>=2.0.50
+timm>=0.9.0
+
+# Style extraction training
+tqdm>=4.65.0

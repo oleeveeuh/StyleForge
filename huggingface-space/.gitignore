@@ -1,0 +1,39 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Model weights (downloaded at runtime via GitHub releases)
+models/*.pth
+models/*.pt
+
+# Test outputs
+test_outputs/
+*.jpg
+*.png
+!examples/*.jpg
+!examples/*.png
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Gradio
+gradio_cached_examples/
+flagged/
+
+# BUT allow pre-compiled kernels in prebuilt/
+!kernels/prebuilt/*.so
+!kernels/prebuilt/*.pyd
