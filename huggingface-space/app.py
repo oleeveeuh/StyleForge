@@ -1818,10 +1818,12 @@ with gr.Blocks(
     css=custom_css
 ) as demo:
 
-    # Header with CUDA badge
+    # Header with CUDA badge and dev notice
     cuda_badge = f"<span class='backend-badge'>CUDA Available</span>" if CUDA_KERNELS_AVAILABLE else ""
     gr.Markdown(f"""
-    # StyleForge
+    # StyleForge 🚧
+
+    ### *Currently in Development*
 
     ### Real-time neural style transfer with custom CUDA kernels.
 
