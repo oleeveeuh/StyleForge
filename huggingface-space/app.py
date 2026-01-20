@@ -14,6 +14,14 @@ Based on Johnson et al. "Perceptual Losses for Real-Time Style Transfer"
 https://arxiv.org/abs/1603.08155
 """
 
+# Fix for gradio_client boolean schema bug in HF Spaces
+import subprocess
+import sys
+try:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "gradio-client>=1.8.0", "--quiet"])
+except Exception:
+    pass  # Best effort upgrade
+
 import gradio as gr
 import torch
 import torch.nn as nn
