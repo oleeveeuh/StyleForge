@@ -14,13 +14,15 @@ Based on Johnson et al. "Perceptual Losses for Real-Time Style Transfer"
 https://arxiv.org/abs/1603.08155
 """
 
-# Fix for gradio_client boolean schema bug in HF Spaces
-import subprocess
+# Fix for gradio_client boolean schema bug - MUST be before importing gradio
+# Gradio 5.12+ installs gradio-client==1.5.4 which has the bug
+# We upgrade to 1.8.0+ which fixes it, then import gradio
 import sys
+import subprocess
 try:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "gradio-client>=1.8.0", "--quiet"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "gradio-client>=1.8.0", "--quiet", "--no-deps"])
 except Exception:
-    pass  # Best effort upgrade
+    pass  # Best effort - if it fails, continue anyway
 
 import gradio as gr
 import torch
