@@ -1805,6 +1805,9 @@ custom_css = """
    Gradio 5.x Compatible
    ============================================ */
 
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 /* Animated gradient background */
 body {
     background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
@@ -1818,6 +1821,16 @@ body {
     0% { background-position: 0% 50%; }
     50% { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
+}
+
+/* Universal font application */
+* {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Ensure text elements are visible */
+h1, h2, h3, h4, h5, h6, p, span, div, label, button, input, textarea, select {
+    color: inherit;
 }
 
 /* Main app container - glass effect */
@@ -2018,6 +2031,46 @@ input[type="radio"] {
 /* Markdown content */
 .markdown {
     color: #374151 !important;
+}
+
+/* Text visibility fixes */
+.gradio-container,
+.gradio-container *,
+.gradio-container h1,
+.gradio-container h2,
+.gradio-container h3,
+.gradio-container h4,
+.gradio-container h5,
+.gradio-container h6,
+.gradio-container p,
+.gradio-container span,
+.gradio-container label {
+    color: #1F2937 !important;
+}
+
+/* Button text colors */
+button,
+.gradio-container button {
+    color: inherit !important;
+}
+
+/* Input and select text colors */
+input,
+textarea,
+select {
+    color: #1F2937 !important;
+}
+
+/* Label colors */
+label,
+[class*="label"] {
+    color: #374151 !important;
+    font-weight: 500 !important;
+}
+
+/* Gradio 5.x specific text elements */
+.svelte-*, [class*="svelte-"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
 }
 
 /* Group/Row/Column containers */
