@@ -1840,7 +1840,9 @@ with gr.Blocks(
         font=gr.themes.GoogleFont("Inter"),
         radius_size="lg",
     ),
-    css=custom_css
+    css=custom_css,
+    delete_cache=(0, 0),
+    analytics_enabled=False,
 ) as demo:
 
     # Header with Portal-style hero section
@@ -2477,4 +2479,11 @@ with gr.Blocks(
 # ============================================================================
 
 if __name__ == "__main__":
-    demo.launch()
+    # Disable API to avoid gradio_client compatibility issues
+    import os
+    os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
+    demo.launch(
+        show_api=False,
+        show_error=True,
+        quiet=False,
+    )
