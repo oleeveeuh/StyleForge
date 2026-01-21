@@ -126,7 +126,11 @@ def get_device():
     """
     global _device_cache
     if _device_cache is None:
-        if torch.cuda.is_available():
+        # On ZeroGPU, always assume CUDA will be available in GPU task
+        # Don't call torch.cuda.is_available() at module level
+        if _SPACES_ZERO_GPU:
+            _device_cache = torch.device('cuda')  # Will be resolved in GPU task
+        elif torch.cuda.is_available():
             _device_cache = torch.device('cuda')
         else:
             _device_cache = torch.device('cpu')
@@ -734,7 +738,7 @@ def get_blended_model(style1: str, style2: str, alpha: float, backend: str = 'au
 # Region-based Style Transfer
 # ============================================================================
 
-def apply_region_style(
+def apply_region_style_impl(
     image: Image.Image,
     mask: Image.Image,
     style1: str,
@@ -961,7 +965,7 @@ def get_ai_segmentation_mask(
 # Real Style Extraction Training (VGG-based)
 # ============================================================================
 
-def train_custom_style(
+def train_custom_style_impl(
     style_image: Image.Image,
     style_name: str,
     num_iterations: int = 100,
@@ -1090,7 +1094,7 @@ def train_custom_style(
         return None, error_msg
 
 
-def extract_style_from_image(
+def extract_style_from_image_impl(
     style_image: Image.Image,
     content_image: Image.Image,
     style_name: str,
@@ -1556,15 +1560,30 @@ def stylize_image_impl(
 
 
 # Wrap with GPU decorator for ZeroGPU if available
-# ZeroGPU requires at least one @GPU function to be present
+# ZeroGPU requires ALL GPU-using functions to be decorated with @GPU
 if SPACES_AVAILABLE:
     try:
         stylize_image = GPU(stylize_image_impl)
+        train_custom_style = GPU(train_custom_style_impl)
+        extract_style_from_image = GPU(extract_style_from_image_impl)
+        create_style_blend_output = GPU(create_style_blend_output_impl)
+        apply_region_style = GPU(apply_region_style_impl)
+        apply_region_style_ui = GPU(apply_region_style_ui_impl)
     except Exception:
         # Fallback if GPU decorator fails
         stylize_image = stylize_image_impl
+        train_custom_style = train_custom_style_impl
+        extract_style_from_image = extract_style_from_image_impl
+        create_style_blend_output = create_style_blend_output_impl
+        apply_region_style = apply_region_style_impl
+        apply_region_style_ui = apply_region_style_ui_impl
 else:
     stylize_image = stylize_image_impl
+    train_custom_style = train_custom_style_impl
+    extract_style_from_image = extract_style_from_image_impl
+    create_style_blend_output = create_style_blend_output_impl
+    apply_region_style = apply_region_style_impl
+    apply_region_style_ui = apply_region_style_ui_impl
 
 
 def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.Image:
@@ -1614,7 +1633,7 @@ def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.
         return image
 
 
-def apply_region_style_ui(
+def apply_region_style_ui_impl(
     input_image: Image.Image,
     mask_type: str,
     position: float,
@@ -1767,7 +1786,7 @@ def run_backend_comparison(style: str) -> str:
     return output
 
 
-def create_style_blend_output(
+def create_style_blend_output_impl(
     input_image: Image.Image,
     style1: str,
     style2: str,
@@ -1802,17 +1821,22 @@ def create_style_blend_output(
 
 custom_css = """
 /* ============================================
-   LIQUID GLASS / GLASSMORPHISM THEME
+   FLOWLINE-INSPIRED MINIMAL THEME
+   Clean, modern, refined
    Gradio 5.x Compatible
    ============================================ */
+
+/* Import fonts - Inter for UI, plus a distinctive display font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 /* Animated gradient background */
 body {
     background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
     background-size: 400% 400%;
     animation: gradientBG 15s ease infinite;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     min-height: 100vh;
+    color: #09090B;
 }
 
 @keyframes gradientBG {
@@ -1823,40 +1847,37 @@ body {
 
 /* Universal font application */
 * {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* Ensure text elements are visible */
-h1, h2, h3, h4, h5, h6, p, span, div, label, button, input, textarea, select {
-    color: inherit;
+/* Headings use Space Grotesk for distinctive look */
+h1, h2, h3, .gradio-container h1, .gradio-container h2, .gradio-container h3 {
+    font-family: 'Space Grotesk', sans-serif !important;
 }
 
-/* Main app container - glass effect */
+/* Main app container - clean, minimal */
 .gradio-container {
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    background: rgba(255, 255, 255, 0.75) !important;
-    border-radius: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+    background: #FFFFFF !important;
+    border-radius: 12px;
+    border: 1px solid #E4E4E7;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     max-width: 1400px;
-    margin: 20px auto;
-    padding: 24px !important;
+    margin: 24px auto;
+    padding: 32px !important;
 }
 
-/* Primary button - gradient with glass shimmer */
+/* Primary button - bigger with smooth hover animation */
 button.primary,
 .gr-button-primary,
 [class*="primary"] {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%) !important;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    color: white !important;
+    background: #18181B !important;
+    border: 1px solid #18181B !important;
+    color: #FAFAFA !important;
     font-weight: 600 !important;
-    border-radius: 16px !important;
-    padding: 12px 24px !important;
-    transition: all 0.3s ease !important;
-    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25) !important;
+    font-size: 16px !important;
+    border-radius: 12px !important;
+    padding: 14px 28px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
     position: relative;
     overflow: hidden;
 }
@@ -1864,71 +1885,80 @@ button.primary,
 button.primary:hover,
 .gr-button-primary:hover,
 [class*="primary"]:hover {
+    background: #000000 !important;
+    border-color: #000000 !important;
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4) !important;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15) !important;
 }
 
 button.primary:active,
 .gr-button-primary:active,
 [class*="primary"]:active {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.98);
 }
 
-/* Secondary button - glass style */
+/* Secondary button - bigger with hover animation */
 button.secondary,
 .gr-button-secondary,
 .download,
 [class*="secondary"] {
-    background: rgba(255, 255, 255, 0.6) !important;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.4) !important;
-    color: #374151 !important;
-    border-radius: 16px !important;
-    padding: 10px 20px !important;
-    transition: all 0.3s ease !important;
-    font-weight: 500 !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E4E4E7 !important;
+    color: #18181B !important;
+    border-radius: 12px !important;
+    padding: 13px 24px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    font-weight: 600 !important;
+    font-size: 15px !important;
 }
 
 button.secondary:hover,
 .gr-button-secondary:hover,
 .download:hover,
 [class*="secondary"]:hover {
-    background: rgba(255, 255, 255, 0.8) !important;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1) !important;
+    background: #FAFAFA !important;
+    border-color: #18181B !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08) !important;
 }
 
-/* All buttons */
+/* All buttons - bigger base size */
 button {
-    border-radius: 12px !important;
-    transition: all 0.2s ease !important;
+    border-radius: 10px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    padding: 12px 20px !important;
 }
 
-/* Tabs - glass style */
+/* Tabs - clean style */
 .tabs {
-    background: rgba(255, 255, 255, 0.4) !important;
-    backdrop-filter: blur(10px);
-    border-radius: 16px !important;
-    padding: 8px !important;
-    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    background: #FAFAFA !important;
+    border-radius: 8px !important;
+    padding: 4px !important;
+    border: 1px solid #E4E4E7 !important;
 }
 
 /* Tab buttons */
 button.tab-item {
     background: transparent !important;
-    border-radius: 12px !important;
-    color: #6B7280 !important;
-    transition: all 0.3s ease !important;
+    border-radius: 6px !important;
+    color: #71717A !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    transition: all 0.15s ease !important;
+    padding: 8px 14px !important;
 }
 
 button.tab-item:hover {
-    background: rgba(255, 255, 255, 0.5) !important;
+    background: rgba(0, 0, 0, 0.04) !important;
 }
 
 button.tab-item.selected {
-    background: rgba(255, 255, 255, 0.8) !important;
-    color: #6366F1 !important;
-    font-weight: 600 !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    background: #FFFFFF !important;
+    color: #18181B !important;
+    font-weight: 500 !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
 }
 
 /* Input boxes and text areas */
@@ -1936,99 +1966,106 @@ input[type="text"],
 input[type="number"],
 textarea,
 select {
-    background: rgba(255, 255, 255, 0.7) !important;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.5) !important;
-    border-radius: 12px !important;
-    transition: all 0.3s ease !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E4E4E7 !important;
+    border-radius: 8px !important;
+    transition: all 0.15s ease !important;
+    font-size: 14px !important;
 }
 
 input[type="text"]:focus,
 input[type="number"]:focus,
 textarea:focus,
 select:focus {
-    background: rgba(255, 255, 255, 0.9) !important;
-    border-color: #6366F1 !important;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1) !important;
+    background: #FFFFFF !important;
+    border-color: #18181B !important;
     outline: none !important;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.05) !important;
 }
 
-/* Image containers - glass frame */
+/* Image containers - clean border */
 .image-container,
 [class*="image"] {
-    border-radius: 16px !important;
-    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    border-radius: 8px !important;
+    border: 1px solid #E4E4E7 !important;
     overflow: hidden !important;
-    background: rgba(255, 255, 255, 0.3) !important;
+    background: #FAFAFA !important;
 }
 
-/* Slider styling */
+/* Slider styling - bigger */
 input[type="range"] {
     -webkit-appearance: none;
-    background: rgba(229, 231, 235, 0.6);
-    backdrop-filter: blur(10px);
-    border-radius: 8px;
-    height: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: #E4E4E7;
+    border-radius: 4px;
+    height: 6px;
+    border: none;
 }
 
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 22px;
-    height: 22px;
-    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-    border: 3px solid white;
+    width: 20px;
+    height: 20px;
+    background: #18181B;
+    border: 3px solid #FFFFFF;
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
 }
 
 input[type="range"]::-moz-range-thumb {
-    width: 22px;
-    height: 22px;
-    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-    border: 3px solid white;
+    width: 20px;
+    height: 20px;
+    background: #18181B;
+    border: 3px solid #FFFFFF;
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
 }
 
-/* Checkbox and radio styling */
+input[type="range"]::-moz-range-thumb:hover {
+    transform: scale(1.1);
+}
+
+/* Checkbox and radio styling - bigger */
 input[type="checkbox"],
 input[type="radio"] {
-    accent-color: #6366F1 !important;
-    width: 18px !important;
-    height: 18px !important;
+    accent-color: #18181B !important;
+    width: 20px !important;
+    height: 20px !important;
 }
 
-/* Badge styles */
+/* Badge styles - clean, minimal */
 .live-badge {
     display: inline-block;
-    padding: 6px 16px;
-    background: rgba(254, 243, 199, 0.8);
-    backdrop-filter: blur(10px);
+    padding: 4px 12px;
+    background: #FEF3C7;
     color: #92400E;
-    border-radius: 24px;
-    font-size: 13px;
-    font-weight: 600;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid #FDE68A;
 }
 
 .backend-badge {
     display: inline-block;
-    padding: 6px 16px;
-    background: rgba(209, 250, 229, 0.8);
-    backdrop-filter: blur(10px);
+    padding: 4px 12px;
+    background: #D1FAE5;
     color: #065F46;
-    border-radius: 24px;
-    font-size: 13px;
-    font-weight: 600;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid #A7F3D0;
 }
 
 /* Markdown content */
 .markdown {
-    color: #374151 !important;
+    color: #27272A !important;
 }
 
 /* Text visibility fixes */
@@ -2043,7 +2080,7 @@ input[type="radio"] {
 .gradio-container p,
 .gradio-container span,
 .gradio-container label {
-    color: #1F2937 !important;
+    color: #27272A !important;
 }
 
 /* Button text colors */
@@ -2056,14 +2093,22 @@ button,
 input,
 textarea,
 select {
-    color: #1F2937 !important;
+    color: #27272A !important;
 }
 
-/* Label colors */
+/* Label colors - bigger text */
 label,
 [class*="label"] {
-    color: #374151 !important;
-    font-weight: 500 !important;
+    color: #27272A !important;
+    font-weight: 600 !important;
+    font-size: 15px !important;
+}
+
+/* General text size increase */
+.gradio-container p,
+.gradio-container span,
+.gradio-container div {
+    font-size: 15px !important;
 }
 
 /* Gradio 5.x specific text elements */
@@ -2075,79 +2120,76 @@ label,
 .group,
 .row,
 .column {
-    background: rgba(255, 255, 255, 0.3) !important;
-    border-radius: 16px !important;
-    padding: 16px !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
 }
 
-/* Accordion */
+/* Accordion - clean */
 .details {
-    background: rgba(255, 255, 255, 0.4) !important;
-    backdrop-filter: blur(10px);
-    border-radius: 16px !important;
-    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    background: #FAFAFA !important;
+    border-radius: 8px !important;
+    border: 1px solid #E4E4E7 !important;
 }
 
-/* Scrollbar - glass style */
+/* Scrollbar - minimal */
 ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-    background: rgba(229, 231, 235, 0.3);
-    border-radius: 8px;
+    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(167, 139, 250, 0.5);
-    border-radius: 8px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
+    background: #D4D4D8;
+    border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(139, 92, 246, 0.7);
+    background: #A1A1AA;
 }
 
-/* Progress bar */
+/* Progress bar - minimal */
 progress {
-    background: rgba(229, 231, 235, 0.5) !important;
-    border-radius: 8px !important;
-    height: 8px !important;
+    background: #E4E4E7 !important;
+    border-radius: 4px !important;
+    height: 4px !important;
 }
 
 progress::-webkit-progress-bar {
-    background: rgba(229, 231, 235, 0.5);
-    border-radius: 8px;
+    background: #E4E4E7;
+    border-radius: 4px;
 }
 
 progress::-webkit-progress-value {
-    background: linear-gradient(90deg, #6366F1, #8B5CF6) !important;
-    border-radius: 8px;
+    background: #18181B !important;
+    border-radius: 4px;
 }
 
 /* Mobile responsive */
 @media (max-width: 768px) {
     .gradio-container {
-        margin: 10px !important;
-        padding: 16px !important;
-        border-radius: 20px !important;
+        margin: 12px !important;
+        padding: 20px !important;
+        border-radius: 12px !important;
     }
 
     button.primary,
     .gr-button-primary,
     [class*="primary"] {
-        padding: 10px 18px !important;
+        padding: 9px 16px !important;
         font-size: 14px !important;
     }
 }
 
-/* Loading spinner */
+/* Loading spinner - minimal */
 .spinner {
-    border: 3px solid rgba(99, 102, 241, 0.2);
-    border-top: 3px solid #6366F1;
+    border: 2px solid #E4E4E7;
+    border-top: 2px solid #18181B;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -2159,19 +2201,18 @@ progress::-webkit-progress-value {
 .gradio-button.primary,
 button[class*="Primary"],
 [type="button"].primary {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    color: white !important;
-    font-weight: 600 !important;
-    border-radius: 16px !important;
-    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25) !important;
+    background: #18181B !important;
+    border: 1px solid #18181B !important;
+    color: #FAFAFA !important;
+    font-weight: 500 !important;
+    border-radius: 8px !important;
 }
 
 /* Block containers */
 .block {
-    background: rgba(255, 255, 255, 0.25) !important;
-    border-radius: 16px !important;
-    padding: 12px !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
 }
 
 /* Form elements */
@@ -2183,29 +2224,24 @@ button[class*="Primary"],
 
 with gr.Blocks(
     title="StyleForge: Neural Style Transfer",
-    theme=gr.themes.Glass(
-        primary_hue="indigo",
-        secondary_hue="purple",
+    theme=gr.themes.Base(
         font=gr.themes.GoogleFont("Inter"),
-        radius_size="lg",
+        radius_size="sm",
     ),
     css=custom_css,
 ) as demo:
 
-    # Header with Portal-style hero section
+    # Header - bigger text with Space Grotesk font
     cuda_badge = f"<span class='backend-badge'>CUDA Accelerated</span>" if CUDA_KERNELS_AVAILABLE else ""
     gr.Markdown(f"""
-    <div style="text-align: center; padding: 3rem 0 2rem 0;">
-        <h1 style="font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">
+    <div style="text-align: center; padding: 2.5rem 0 2rem 0;">
+        <h1 style="font-size: 3.5rem; margin-bottom: 0.5rem; color: #18181B; font-weight: 700; letter-spacing: -0.03em; font-family: 'Space Grotesk', sans-serif;">
             StyleForge
         </h1>
-        <p style="color: #6B7280; font-size: 1.1rem; margin-bottom: 1rem;">
+        <p style="color: #71717A; font-size: 1.15rem; margin-bottom: 1rem; font-weight: 400; letter-spacing: -0.01em;">
             Neural Style Transfer with Custom CUDA Kernels
         </p>
         {cuda_badge}
-        <p style="color: #9CA3AF; margin-top: 1rem; font-size: 0.9rem;">
-            Custom Styles • Region Transfer • Style Blending • Real-time Processing
-        </p>
     </div>
     """)
 

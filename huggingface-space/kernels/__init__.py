@@ -122,9 +122,19 @@ def load_prebuilt_kernels():
     kernel_files += list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
 
     # Try downloading from dataset if not found locally (on ZeroGPU or if CUDA available)
+    # IMPORTANT: Don't call torch.cuda.is_available() on ZeroGPU at module level!
     if not kernel_files:
         print(f"No local pre-compiled kernels found. _ZERO_GPU={_ZERO_GPU}")
-        if _ZERO_GPU or torch.cuda.is_available():
+        # On ZeroGPU, always try to download without checking CUDA
+        # On local, check CUDA first before downloading
+        should_download = _ZERO_GPU
+        if not _ZERO_GPU:
+            try:
+                should_download = torch.cuda.is_available()
+            except:
+                should_download = False
+
+        if should_download:
             print("Trying HuggingFace dataset...")
             if _download_kernels_from_dataset():
                 # Check again after download - look in kernels directory
@@ -229,7 +239,12 @@ def compile_kernels():
         print("Using pre-compiled CUDA kernels!")
         return True
 
-    if not torch.cuda.is_available():
+    # Check CUDA availability (safe here since we're not on ZeroGPU)
+    try:
+        if not torch.cuda.is_available():
+            _KERNELS_COMPILED = True
+            return False
+    except:
         _KERNELS_COMPILED = True
         return False
 
@@ -256,8 +271,13 @@ if _ZERO_GPU:
     else:
         print("No pre-compiled kernels available, using PyTorch GPU fallback")
     _KERNELS_COMPILED = True
-elif torch.cuda.is_available():
-    compile_kernels()
+elif not _ZERO_GPU:
+    # On local, check if CUDA is available and compile
+    try:
+        if torch.cuda.is_available():
+            compile_kernels()
+    except:
+        _KERNELS_COMPILED = True
 
 
 __all__ = [
