@@ -1524,7 +1524,7 @@ def stylize_image_impl(
 | **Style** | {style_display} |
 | **Backend** | {backend_display} |
 | **Time** | {elapsed_ms:.1f} ms ({fps:.0f} FPS) |
-| **Avg Time** | {stats.avg_ms:.1f if stats else elapsed_ms:.1f} ms |
+| **Avg Time** | {(stats.avg_ms if stats else elapsed_ms):.1f} ms |
 | **Total Images** | {stats.total_inferences if stats else 1} |
 | **Size** | {width}x{height} |
 | **Device** | {get_device().type.upper()} |
