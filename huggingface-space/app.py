@@ -782,10 +782,18 @@ def apply_region_style_impl(
     mask_tensor = torch.from_numpy(mask_np).float() / 255.0
     mask_tensor = mask_tensor.unsqueeze(0).unsqueeze(0).to(get_device())
 
-    # Stylize with both models
+    # Stylize with both models (with timing)
+    start = time.perf_counter()
     with torch.no_grad():
         output1 = model1(img_tensor)
         output2 = model2(img_tensor)
+    if get_device().type == 'cuda':
+        torch.cuda.synchronize()
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    # Record performance
+    actual_backend = 'cuda' if (backend == 'cuda' or (backend == 'auto' and CUDA_KERNELS_AVAILABLE)) else 'pytorch'
+    perf_tracker.record(elapsed_ms, actual_backend)
 
     # Blend based on mask
     # mask_tensor is [1, 1, H, W] with values 0-1
@@ -1446,6 +1454,7 @@ def stylize_image_impl(
     input_image: Optional[Image.Image],
     style: str,
     backend: str,
+    intensity: float,
     show_comparison: bool,
     add_watermark: bool
 ) -> Tuple[Optional[Image.Image], str, Optional[str]]:
@@ -1495,6 +1504,22 @@ def stylize_image_impl(
 
         # Postprocess
         output_image = postprocess_tensor(output_tensor.cpu())
+
+        # Apply intensity blending (blend original with stylized output)
+        # intensity 0-100, where 100 = full style, 0 = original
+        intensity_factor = intensity / 100.0
+        if intensity_factor < 1.0:
+            import torchvision.transforms as transforms
+            to_tensor = transforms.ToTensor()
+            to_pil = transforms.ToPILImage()
+
+            original_tensor = to_tensor(input_image)
+            output_tensor_pil = to_tensor(output_image)
+
+            # Blend: output * intensity + original * (1 - intensity)
+            blended_tensor = output_tensor_pil * intensity_factor + original_tensor * (1 - intensity_factor)
+            blended_tensor = torch.clamp(blended_tensor, 0, 1)
+            output_image = to_pil(blended_tensor)
 
         # Add watermark if requested
         if add_watermark:
@@ -1587,7 +1612,7 @@ else:
     # apply_region_style_ui = apply_region_style_ui_impl
 
 
-def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.Image:
+def process_webcam_frame(image: Image.Image, style: str, backend: str, intensity: float = 70) -> Image.Image:
     """Process webcam frame in real-time."""
     if image is None:
         return image
@@ -1623,6 +1648,20 @@ def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.
             torch.cuda.synchronize()
 
         output_image = postprocess_tensor(output_tensor.cpu())
+
+        # Apply intensity blending
+        intensity_factor = intensity / 100.0
+        if intensity_factor < 1.0:
+            import torchvision.transforms as transforms
+            to_tensor = transforms.ToTensor()
+            to_pil = transforms.ToPILImage()
+
+            original_tensor = to_tensor(image)
+            output_tensor_pil = to_tensor(output_image)
+
+            blended_tensor = output_tensor_pil * intensity_factor + original_tensor * (1 - intensity_factor)
+            blended_tensor = torch.clamp(blended_tensor, 0, 1)
+            output_image = to_pil(blended_tensor)
 
         webcam_state.frame_count += 1
         actual_backend = 'cuda' if backend == 'cuda' or (backend == 'auto' and CUDA_KERNELS_AVAILABLE) else 'pytorch'
@@ -1806,11 +1845,19 @@ def create_style_blend_output_impl(
     alpha = blend_ratio / 100
     model = get_blended_model(style1, style2, alpha, backend)
 
-    # Process
+    # Process with timing
     input_tensor = preprocess_image(input_image).to(get_device())
 
+    start = time.perf_counter()
     with torch.no_grad():
         output_tensor = model(input_tensor)
+    if get_device().type == 'cuda':
+        torch.cuda.synchronize()
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    # Record performance
+    actual_backend = 'cuda' if (backend == 'cuda' or (backend == 'auto' and CUDA_KERNELS_AVAILABLE)) else 'pytorch'
+    perf_tracker.record(elapsed_ms, actual_backend)
 
     output_image = postprocess_tensor(output_tensor.cpu())
     return output_image
@@ -2353,6 +2400,14 @@ with gr.Blocks(
                         label="Processing Backend"
                     )
 
+                    quick_intensity = gr.Slider(
+                        minimum=0,
+                        maximum=100,
+                        value=70,
+                        step=5,
+                        label="Style Intensity (0% = Original, 100% = Full Style)"
+                    )
+
                     with gr.Row():
                         quick_compare = gr.Checkbox(
                             label="Side-by-side",
@@ -2632,6 +2687,14 @@ with gr.Blocks(
                         label="Backend"
                     )
 
+                    webcam_intensity = gr.Slider(
+                        minimum=0,
+                        maximum=100,
+                        value=70,
+                        step=5,
+                        label="Style Intensity (0% = Original, 100% = Full Style)"
+                    )
+
                     webcam_stream = gr.Image(
                         sources=["webcam"],
                         label="Webcam Feed",
@@ -2726,12 +2789,12 @@ with gr.Blocks(
 
     gr.Examples(
         examples=[
-            [example_img, "candy", "auto", False, False],
-            [example_img, "mosaic", "auto", False, False],
-            [example_img, "rain_princess", "auto", True, False],
-            [example_img, "udnie", "auto", False, False],
+            [example_img, "candy", "auto", 70, False, False],
+            [example_img, "mosaic", "auto", 70, False, False],
+            [example_img, "rain_princess", "auto", 70, True, False],
+            [example_img, "udnie", "auto", 70, False, False],
         ],
-        inputs=[quick_image, quick_style, quick_backend, quick_compare, quick_watermark],
+        inputs=[quick_image, quick_style, quick_backend, quick_intensity, quick_compare, quick_watermark],
         label="Style Presets (click to load)"
     )
 
@@ -2857,7 +2920,7 @@ with gr.Blocks(
 
     quick_btn.click(
         fn=stylize_image,
-        inputs=[quick_image, quick_style, quick_backend, quick_compare, quick_watermark],
+        inputs=[quick_image, quick_style, quick_backend, quick_intensity, quick_compare, quick_watermark],
         outputs=[quick_output, quick_stats, quick_download]
     )
 
@@ -2921,7 +2984,7 @@ with gr.Blocks(
     # Users can still upload/process webcam images manually
     webcam_stream.change(
         fn=process_webcam_frame,
-        inputs=[webcam_stream, webcam_style, webcam_backend],
+        inputs=[webcam_stream, webcam_style, webcam_backend, webcam_intensity],
         outputs=[webcam_output],
     )
 
