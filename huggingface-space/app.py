@@ -1842,22 +1842,17 @@ else:
 
 custom_css = """
 /* ============================================
-   FLOWLINE-INSPIRED MINIMAL THEME
-   Clean, modern, refined
+   LIQUID GLASS / GLASSMORPHISM THEME
    Gradio 5.x Compatible
    ============================================ */
-
-/* Import fonts - Inter for UI, plus a distinctive display font */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 /* Animated gradient background */
 body {
     background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
     background-size: 400% 400%;
     animation: gradientBG 15s ease infinite;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
     min-height: 100vh;
-    color: #09090B;
 }
 
 @keyframes gradientBG {
@@ -1868,118 +1863,181 @@ body {
 
 /* Universal font application */
 * {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
-/* Headings use Space Grotesk for distinctive look */
-h1, h2, h3, .gradio-container h1, .gradio-container h2, .gradio-container h3 {
-    font-family: 'Space Grotesk', sans-serif !important;
+/* Ensure text elements are visible */
+h1, h2, h3, h4, h5, h6, p, span, div, label, button, input, textarea, select {
+    color: inherit;
 }
 
-/* Main app container - clean, minimal */
+/* Main app container - glass effect */
 .gradio-container {
-    background: #FFFFFF !important;
-    border-radius: 12px;
-    border: 1px solid #E4E4E7;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(255, 255, 255, 0.75) !important;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
     max-width: 1400px;
-    margin: 24px auto;
-    padding: 32px !important;
+    margin: 20px auto;
+    padding: 24px !important;
 }
 
-/* Primary button - bigger with smooth hover animation */
+/* Primary button - enhanced glass effect with full width */
 button.primary,
 .gr-button-primary,
 [class*="primary"] {
-    background: #18181B !important;
-    border: 1px solid #18181B !important;
-    color: #FAFAFA !important;
-    font-weight: 600 !important;
-    font-size: 16px !important;
-    border-radius: 12px !important;
-    padding: 14px 28px !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    background: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.25) 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0.05) 100%) !important;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    color: #4F46E5 !important;
+    font-weight: 700 !important;
+    border-radius: 20px !important;
+    padding: 16px 32px !important;
+    transition: all 0.3s ease !important;
+    box-shadow:
+        0 8px 32px rgba(31, 38, 135, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.05) !important;
     position: relative;
     overflow: hidden;
+    width: 100% !important;
+    min-height: 56px !important;
+}
+
+button.primary::before,
+.gr-button-primary::before,
+[class*="primary"]::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg,
+        transparent,
+        rgba(255, 255, 255, 0.4),
+        transparent);
+    transition: left 0.5s ease;
+}
+
+button.primary:hover::before,
+.gr-button-primary:hover::before,
+[class*="primary"]:hover::before {
+    left: 100%;
 }
 
 button.primary:hover,
 .gr-button-primary:hover,
 [class*="primary"]:hover {
-    background: #000000 !important;
-    border-color: #000000 !important;
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15) !important;
+    background: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.35) 0%,
+        rgba(255, 255, 255, 0.15) 50%,
+        rgba(255, 255, 255, 0.1) 100%) !important;
+    border-color: rgba(255, 255, 255, 0.6) !important;
+    box-shadow:
+        0 12px 40px rgba(31, 38, 135, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.6),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.05) !important;
 }
 
 button.primary:active,
 .gr-button-primary:active,
 [class*="primary"]:active {
-    transform: translateY(0) scale(0.98);
+    transform: translateY(0);
+    box-shadow:
+        0 4px 20px rgba(31, 38, 135, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
 
-/* Secondary button - bigger with hover animation */
+/* Secondary button - enhanced glass style */
 button.secondary,
 .gr-button-secondary,
 .download,
 [class*="secondary"] {
-    background: #FFFFFF !important;
-    border: 1px solid #E4E4E7 !important;
-    color: #18181B !important;
-    border-radius: 12px !important;
-    padding: 13px 24px !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    background: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.4) 0%,
+        rgba(255, 255, 255, 0.2) 100%) !important;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    color: #374151 !important;
+    border-radius: 20px !important;
+    padding: 14px 28px !important;
+    transition: all 0.3s ease !important;
     font-weight: 600 !important;
-    font-size: 15px !important;
+    box-shadow:
+        0 8px 32px rgba(31, 38, 135, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.6),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.03) !important;
+    width: 100% !important;
+    min-height: 52px !important;
 }
 
 button.secondary:hover,
 .gr-button-secondary:hover,
 .download:hover,
 [class*="secondary"]:hover {
-    background: #FAFAFA !important;
-    border-color: #18181B !important;
+    background: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.6) 0%,
+        rgba(255, 255, 255, 0.3) 100%) !important;
+    border-color: rgba(255, 255, 255, 0.7) !important;
+    box-shadow:
+        0 12px 40px rgba(31, 38, 135, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
     transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08) !important;
 }
 
-/* All buttons - bigger base size */
-button {
-    border-radius: 10px !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    font-size: 15px !important;
-    font-weight: 600 !important;
-    padding: 12px 20px !important;
+/* All buttons - full width in containers */
+button,
+.gr-button {
+    border-radius: 20px !important;
+    transition: all 0.3s ease !important;
+    width: 100% !important;
 }
 
-/* Tabs - clean style */
+/* Button containers - ensure buttons fill row */
+.gradio-container button,
+#quick_stylize button,
+#style_blending button,
+#region_transfer button,
+#custom_training button,
+#benchmarking button {
+    width: 100% !important;
+}
+
+/* Tabs - glass style */
 .tabs {
-    background: #FAFAFA !important;
-    border-radius: 8px !important;
-    padding: 4px !important;
-    border: 1px solid #E4E4E7 !important;
+    background: rgba(255, 255, 255, 0.4) !important;
+    backdrop-filter: blur(10px);
+    border-radius: 16px !important;
+    padding: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
 }
 
 /* Tab buttons */
 button.tab-item {
     background: transparent !important;
-    border-radius: 6px !important;
-    color: #71717A !important;
-    font-size: 14px !important;
-    font-weight: 500 !important;
-    transition: all 0.15s ease !important;
-    padding: 8px 14px !important;
+    border-radius: 12px !important;
+    color: #6B7280 !important;
+    transition: all 0.3s ease !important;
 }
 
 button.tab-item:hover {
-    background: rgba(0, 0, 0, 0.04) !important;
+    background: rgba(255, 255, 255, 0.5) !important;
 }
 
 button.tab-item.selected {
-    background: #FFFFFF !important;
-    color: #18181B !important;
-    font-weight: 500 !important;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+    background: rgba(255, 255, 255, 0.8) !important;
+    color: #6366F1 !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
 }
 
 /* Input boxes and text areas */
@@ -1987,106 +2045,99 @@ input[type="text"],
 input[type="number"],
 textarea,
 select {
-    background: #FFFFFF !important;
-    border: 1px solid #E4E4E7 !important;
-    border-radius: 8px !important;
-    transition: all 0.15s ease !important;
-    font-size: 14px !important;
+    background: rgba(255, 255, 255, 0.7) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
 }
 
 input[type="text"]:focus,
 input[type="number"]:focus,
 textarea:focus,
 select:focus {
-    background: #FFFFFF !important;
-    border-color: #18181B !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    border-color: #6366F1 !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1) !important;
     outline: none !important;
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.05) !important;
 }
 
-/* Image containers - clean border */
+/* Image containers - glass frame */
 .image-container,
 [class*="image"] {
-    border-radius: 8px !important;
-    border: 1px solid #E4E4E7 !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
     overflow: hidden !important;
-    background: #FAFAFA !important;
+    background: rgba(255, 255, 255, 0.3) !important;
 }
 
-/* Slider styling - bigger */
+/* Slider styling */
 input[type="range"] {
     -webkit-appearance: none;
-    background: #E4E4E7;
-    border-radius: 4px;
-    height: 6px;
-    border: none;
+    background: rgba(229, 231, 235, 0.6);
+    backdrop-filter: blur(10px);
+    border-radius: 8px;
+    height: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
-    background: #18181B;
-    border: 3px solid #FFFFFF;
+    width: 22px;
+    height: 22px;
+    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+    border: 3px solid white;
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-    transition: transform 0.2s ease;
-}
-
-input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
 }
 
 input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    background: #18181B;
-    border: 3px solid #FFFFFF;
+    width: 22px;
+    height: 22px;
+    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+    border: 3px solid white;
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-    transition: transform 0.2s ease;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
 }
 
-input[type="range"]::-moz-range-thumb:hover {
-    transform: scale(1.1);
-}
-
-/* Checkbox and radio styling - bigger */
+/* Checkbox and radio styling */
 input[type="checkbox"],
 input[type="radio"] {
-    accent-color: #18181B !important;
-    width: 20px !important;
-    height: 20px !important;
+    accent-color: #6366F1 !important;
+    width: 18px !important;
+    height: 18px !important;
 }
 
-/* Badge styles - clean, minimal */
+/* Badge styles */
 .live-badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: #FEF3C7;
+    padding: 6px 16px;
+    background: rgba(254, 243, 199, 0.8);
+    backdrop-filter: blur(10px);
     color: #92400E;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    border: 1px solid #FDE68A;
+    border-radius: 24px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .backend-badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: #D1FAE5;
+    padding: 6px 16px;
+    background: rgba(209, 250, 229, 0.8);
+    backdrop-filter: blur(10px);
     color: #065F46;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    border: 1px solid #A7F3D0;
+    border-radius: 24px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 /* Markdown content */
 .markdown {
-    color: #27272A !important;
+    color: #374151 !important;
 }
 
 /* Text visibility fixes */
@@ -2101,7 +2152,7 @@ input[type="radio"] {
 .gradio-container p,
 .gradio-container span,
 .gradio-container label {
-    color: #27272A !important;
+    color: #1F2937 !important;
 }
 
 /* Button text colors */
@@ -2114,22 +2165,14 @@ button,
 input,
 textarea,
 select {
-    color: #27272A !important;
+    color: #1F2937 !important;
 }
 
-/* Label colors - bigger text */
+/* Label colors */
 label,
 [class*="label"] {
-    color: #27272A !important;
-    font-weight: 600 !important;
-    font-size: 15px !important;
-}
-
-/* General text size increase */
-.gradio-container p,
-.gradio-container span,
-.gradio-container div {
-    font-size: 15px !important;
+    color: #374151 !important;
+    font-weight: 500 !important;
 }
 
 /* Gradio 5.x specific text elements */
@@ -2141,76 +2184,79 @@ label,
 .group,
 .row,
 .column {
-    background: transparent !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
+    background: rgba(255, 255, 255, 0.3) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
 }
 
-/* Accordion - clean */
+/* Accordion */
 .details {
-    background: #FAFAFA !important;
-    border-radius: 8px !important;
-    border: 1px solid #E4E4E7 !important;
+    background: rgba(255, 255, 255, 0.4) !important;
+    backdrop-filter: blur(10px);
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
 }
 
-/* Scrollbar - minimal */
+/* Scrollbar - glass style */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(229, 231, 235, 0.3);
+    border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #D4D4D8;
-    border-radius: 3px;
+    background: rgba(167, 139, 250, 0.5);
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #A1A1AA;
+    background: rgba(139, 92, 246, 0.7);
 }
 
-/* Progress bar - minimal */
+/* Progress bar */
 progress {
-    background: #E4E4E7 !important;
-    border-radius: 4px !important;
-    height: 4px !important;
+    background: rgba(229, 231, 235, 0.5) !important;
+    border-radius: 8px !important;
+    height: 8px !important;
 }
 
 progress::-webkit-progress-bar {
-    background: #E4E4E7;
-    border-radius: 4px;
+    background: rgba(229, 231, 235, 0.5);
+    border-radius: 8px;
 }
 
 progress::-webkit-progress-value {
-    background: #18181B !important;
-    border-radius: 4px;
+    background: linear-gradient(90deg, #6366F1, #8B5CF6) !important;
+    border-radius: 8px;
 }
 
 /* Mobile responsive */
 @media (max-width: 768px) {
     .gradio-container {
-        margin: 12px !important;
-        padding: 20px !important;
-        border-radius: 12px !important;
+        margin: 10px !important;
+        padding: 16px !important;
+        border-radius: 20px !important;
     }
 
     button.primary,
     .gr-button-primary,
     [class*="primary"] {
-        padding: 9px 16px !important;
+        padding: 10px 18px !important;
         font-size: 14px !important;
     }
 }
 
-/* Loading spinner - minimal */
+/* Loading spinner */
 .spinner {
-    border: 2px solid #E4E4E7;
-    border-top: 2px solid #18181B;
+    border: 3px solid rgba(99, 102, 241, 0.2);
+    border-top: 3px solid #6366F1;
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    animation: spin 1s linear infinite;
 }
 
 @keyframes spin {
@@ -2222,18 +2268,19 @@ progress::-webkit-progress-value {
 .gradio-button.primary,
 button[class*="Primary"],
 [type="button"].primary {
-    background: #18181B !important;
-    border: 1px solid #18181B !important;
-    color: #FAFAFA !important;
-    font-weight: 500 !important;
-    border-radius: 8px !important;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25) !important;
 }
 
 /* Block containers */
 .block {
-    background: transparent !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
+    background: rgba(255, 255, 255, 0.25) !important;
+    border-radius: 16px !important;
+    padding: 12px !important;
 }
 
 /* Form elements */
@@ -2245,24 +2292,29 @@ button[class*="Primary"],
 
 with gr.Blocks(
     title="StyleForge: Neural Style Transfer",
-    theme=gr.themes.Base(
+    theme=gr.themes.Glass(
+        primary_hue="indigo",
+        secondary_hue="purple",
         font=gr.themes.GoogleFont("Inter"),
-        radius_size="sm",
+        radius_size="lg",
     ),
     css=custom_css,
 ) as demo:
 
-    # Header - bigger text with Space Grotesk font
+    # Header with Portal-style hero section
     cuda_badge = f"<span class='backend-badge'>CUDA Accelerated</span>" if CUDA_KERNELS_AVAILABLE else ""
     gr.Markdown(f"""
-    <div style="text-align: center; padding: 2.5rem 0 2rem 0;">
-        <h1 style="font-size: 3.5rem; margin-bottom: 0.5rem; color: #18181B; font-weight: 700; letter-spacing: -0.03em; font-family: 'Space Grotesk', sans-serif;">
+    <div style="text-align: center; padding: 3rem 0 2rem 0;">
+        <h1 style="font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">
             StyleForge
         </h1>
-        <p style="color: #71717A; font-size: 1.15rem; margin-bottom: 1rem; font-weight: 400; letter-spacing: -0.01em;">
+        <p style="color: #6B7280; font-size: 1.1rem; margin-bottom: 1rem;">
             Neural Style Transfer with Custom CUDA Kernels
         </p>
         {cuda_badge}
+        <p style="color: #9CA3AF; margin-top: 1rem; font-size: 0.9rem;">
+            Custom Styles • Region Transfer • Style Blending • Real-time Processing
+        </p>
     </div>
     """)
 
