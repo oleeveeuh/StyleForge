@@ -1238,6 +1238,7 @@ def preprocess_image(img: Image.Image) -> torch.Tensor:
 
 def postprocess_tensor(tensor: torch.Tensor) -> Image.Image:
     """Convert tensor to PIL Image."""
+    import torchvision.transforms as transforms
     if tensor.dim() == 4:
         tensor = tensor.squeeze(0)
     tensor = torch.clamp(tensor, 0, 1)
