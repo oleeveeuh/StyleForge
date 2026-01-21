@@ -1965,7 +1965,7 @@ button.primary,
     font-weight: 600 !important;
     letter-spacing: -0.01em !important;
     border-radius: 16px !important;
-    padding: 16px 32px !important;
+    padding: 20px 32px !important;
     transition: all 0.3s ease !important;
     box-shadow:
         0 8px 32px rgba(31, 38, 135, 0.15),
@@ -1974,7 +1974,8 @@ button.primary,
     position: relative;
     overflow: hidden;
     width: 100% !important;
-    min-height: 52px !important;
+    min-height: 64px !important;
+    margin: 8px 0 !important;
 }
 
 button.primary::before,
@@ -2037,7 +2038,7 @@ button.secondary,
     color: #374151 !important;
     font-family: 'Plus Jakarta Sans', sans-serif !important;
     border-radius: 14px !important;
-    padding: 14px 28px !important;
+    padding: 16px 28px !important;
     transition: all 0.3s ease !important;
     font-weight: 500 !important;
     letter-spacing: -0.005em !important;
@@ -2046,7 +2047,8 @@ button.secondary,
         inset 0 1px 0 rgba(255, 255, 255, 0.6),
         inset 0 -1px 0 rgba(0, 0, 0, 0.03) !important;
     width: 100% !important;
-    min-height: 48px !important;
+    min-height: 56px !important;
+    margin: 6px 0 !important;
 }
 
 button.secondary:hover,
@@ -2063,16 +2065,19 @@ button.secondary:hover,
     transform: translateY(-1px);
 }
 
-/* All buttons - Framer-style rounded corners and typography */
+/* All buttons - Framer-style rounded corners and typography with spacing */
 button,
 .gr-button {
     font-family: 'Plus Jakarta Sans', sans-serif !important;
     border-radius: 14px !important;
     transition: all 0.3s ease !important;
     width: 100% !important;
+    min-height: 52px !important;
+    padding: 14px 24px !important;
+    margin: 4px 0 !important;
 }
 
-/* Button containers - ensure buttons fill row */
+/* Button containers - ensure buttons fill row with spacing */
 .gradio-container button,
 #quick_stylize button,
 #style_blending button,
@@ -2080,6 +2085,7 @@ button,
 #custom_training button,
 #benchmarking button {
     width: 100% !important;
+    margin: 6px 0 !important;
 }
 
 /* Tabs - glass style */
@@ -2355,6 +2361,9 @@ button[class*="Primary"],
     font-weight: 600 !important;
     border-radius: 16px !important;
     box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25) !important;
+    min-height: 64px !important;
+    padding: 20px 32px !important;
+    margin: 8px 0 !important;
 }
 
 /* Block containers */
