@@ -1561,29 +1561,30 @@ def stylize_image_impl(
 
 # Wrap with GPU decorator for ZeroGPU if available
 # ZeroGPU requires ALL GPU-using functions to be decorated with @GPU
+# Note: This must come AFTER the function definitions below
 if SPACES_AVAILABLE:
     try:
         stylize_image = GPU(stylize_image_impl)
         train_custom_style = GPU(train_custom_style_impl)
         extract_style_from_image = GPU(extract_style_from_image_impl)
-        create_style_blend_output = GPU(create_style_blend_output_impl)
-        apply_region_style = GPU(apply_region_style_impl)
-        apply_region_style_ui = GPU(apply_region_style_ui_impl)
+        # apply_region_style = GPU(apply_region_style_impl)
+        # apply_region_style_ui = GPU(apply_region_style_ui_impl)
+        # create_style_blend_output will be wrapped after function definition
     except Exception:
         # Fallback if GPU decorator fails
         stylize_image = stylize_image_impl
         train_custom_style = train_custom_style_impl
         extract_style_from_image = extract_style_from_image_impl
-        create_style_blend_output = create_style_blend_output_impl
-        apply_region_style = apply_region_style_impl
-        apply_region_style_ui = apply_region_style_ui_impl
+        # create_style_blend_output = create_style_blend_output_impl
+        # apply_region_style = apply_region_style_impl
+        # apply_region_style_ui = apply_region_style_ui_impl
 else:
     stylize_image = stylize_image_impl
     train_custom_style = train_custom_style_impl
     extract_style_from_image = extract_style_from_image_impl
-    create_style_blend_output = create_style_blend_output_impl
-    apply_region_style = apply_region_style_impl
-    apply_region_style_ui = apply_region_style_ui_impl
+    # create_style_blend_output = create_style_blend_output_impl
+    # apply_region_style = apply_region_style_impl
+    # apply_region_style_ui = apply_region_style_ui_impl
 
 
 def process_webcam_frame(image: Image.Image, style: str, backend: str) -> Image.Image:
@@ -1813,6 +1814,26 @@ def create_style_blend_output_impl(
 
     output_image = postprocess_tensor(output_tensor.cpu())
     return output_image
+
+
+# ============================================================================
+# Complete GPU wrapping for functions defined above
+# ============================================================================
+# Now wrap the remaining functions that were defined after the initial GPU wrapping
+
+if SPACES_AVAILABLE:
+    try:
+        create_style_blend_output = GPU(create_style_blend_output_impl)
+        apply_region_style = GPU(apply_region_style_impl)
+        apply_region_style_ui = GPU(apply_region_style_ui_impl)
+    except Exception:
+        create_style_blend_output = create_style_blend_output_impl
+        apply_region_style = apply_region_style_impl
+        apply_region_style_ui = apply_region_style_ui_impl
+else:
+    create_style_blend_output = create_style_blend_output_impl
+    apply_region_style = apply_region_style_impl
+    apply_region_style_ui = apply_region_style_ui_impl
 
 
 # ============================================================================
