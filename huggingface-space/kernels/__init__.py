@@ -14,6 +14,7 @@ from pathlib import Path
 _CUDA_KERNELS_AVAILABLE = False
 _FusedInstanceNorm2d = None
 _KERNELS_COMPILED = False
+_LOADED_KERNEL_FUNC = None
 
 # Check if running on ZeroGPU
 _ZERO_GPU = os.environ.get('SPACE_ID', '').startswith('hf.co') or os.environ.get('ZERO_GPU') == '1'
@@ -29,50 +30,51 @@ _KERNEL_DATASET = "oliau/styleforge-kernels"  # You'll need to create this datas
 def _download_kernels_from_dataset():
     """Download pre-compiled kernels from HuggingFace dataset."""
     try:
-        from huggingface_hub import hf_hub_download, HfFileSystem, list_repo_files
-        import re
+        from huggingface_hub import hf_hub_download
+        import sys
 
         print(f"Looking for kernels in dataset: {_KERNEL_DATASET}")
 
-        # List all files in the dataset
-        kernel_files = []
+        # Known kernel file name
+        kernel_file = "fused_instance_norm.so"
+
+        # Download directly to the kernels directory
         try:
-            all_files = list_repo_files(_KERNEL_DATASET, repo_type="dataset")
-            # Filter for .so files (Linux) and .pyd files (Windows)
-            kernel_files = [f for f in all_files if f.endswith(('.so', '.pyd'))]
-            print(f"Found kernel files in dataset: {kernel_files}")
+            local_path = hf_hub_download(
+                repo_id=_KERNEL_DATASET,
+                filename=kernel_file,
+                repo_type="dataset",
+                local_dir=str(_PREBUILT_PATH.parent),
+                local_dir_use_symlinks=False
+            )
+            print(f"Successfully downloaded kernel: {kernel_file} -> {local_path}")
+            return True
         except Exception as e:
-            print(f"Could not list dataset files: {e}")
+            print(f"Failed to download {kernel_file}: {e}")
+            # Try alternative paths in case the file is in a subdirectory
+            for subdir in ["", "kernels/", "prebuilt/", "build/"]:
+                try:
+                    alt_path = subdir + kernel_file
+                    local_path = hf_hub_download(
+                        repo_id=_KERNEL_DATASET,
+                        filename=alt_path,
+                        repo_type="dataset",
+                        local_dir=str(_PREBUILT_PATH.parent),
+                        local_dir_use_symlinks=False
+                    )
+                    print(f"Successfully downloaded kernel from {alt_path}: {local_path}")
+                    return True
+                except Exception:
+                    continue
             return False
 
-        if not kernel_files:
-            print("No kernel files (.so/.pyd) found in dataset")
-            return False
-
-        # Download each kernel file to the prebuilt directory
-        downloaded = []
-        for kernel_file in kernel_files:
-            try:
-                # Download to the kernels directory (parent of prebuilt)
-                local_path = hf_hub_download(
-                    repo_id=_KERNEL_DATASET,
-                    filename=kernel_file,
-                    repo_type="dataset",
-                    local_dir=str(_PREBUILT_PATH.parent),
-                    local_dir_use_symlinks=False
-                )
-                downloaded.append(kernel_file)
-                print(f"Downloaded kernel: {kernel_file}")
-            except Exception as e:
-                print(f"Failed to download {kernel_file}: {e}")
-                continue
-
-        return len(downloaded) > 0
-    except ImportError:
-        print("huggingface_hub not available, skipping kernel download")
+    except ImportError as e:
+        print(f"huggingface_hub not available: {e}")
         return False
     except Exception as e:
         print(f"Failed to download kernels from dataset: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -160,33 +162,16 @@ def load_prebuilt_kernels():
                         print(f"Warning: No suitable forward function found in {kernel_file.name}")
                         continue
 
-                    # Create FusedInstanceNorm2d class
-                    class PrebuiltFusedInstanceNorm2d(torch.nn.Module):
-                        def __init__(self, num_features, **kwargs):
-                            super().__init__()
-                            self.num_features = num_features
-                            self.eps = kwargs.get('eps', 1e-5)
-                            if kwargs.get('affine', True):
-                                self.gamma = torch.nn.Parameter(torch.ones(num_features))
-                                self.beta = torch.nn.Parameter(torch.zeros(num_features))
-                            else:
-                                self.register_buffer('gamma', torch.ones(num_features))
-                                self.register_buffer('beta', torch.zeros(num_features))
-                            self._pytorch_norm = torch.nn.InstanceNorm2d(num_features, **kwargs)
-                            self._kernel_func = forward_func
+                    # Store the kernel function globally for use with FusedInstanceNorm2d
+                    _LOADED_KERNEL_FUNC = forward_func
 
-                        def forward(self, x):
-                            try:
-                                # Try calling the kernel function
-                                result = self._kernel_func(
-                                    x.contiguous(), self.gamma, self.beta, self.eps
-                                )
-                                return result
-                            except Exception as e:
-                                # Fallback to PyTorch
-                                return self._pytorch_norm(x)
+                    # Create factory function that uses the wrapper with pre-loaded kernel
+                    def make_fused_instance_norm(num_features, **kwargs):
+                        from .instance_norm_wrapper import FusedInstanceNorm2d
+                        # Pass the pre-loaded kernel function
+                        return FusedInstanceNorm2d(num_features, kernel_func=forward_func, **kwargs)
 
-                    _FusedInstanceNorm2d = PrebuiltFusedInstanceNorm2d
+                    _FusedInstanceNorm2d = make_fused_instance_norm
                     _CUDA_KERNELS_AVAILABLE = True
                     _KERNELS_COMPILED = True
                     print(f"Successfully initialized FusedInstanceNorm2d from {kernel_file.name}")
