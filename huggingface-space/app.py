@@ -14,15 +14,20 @@ Based on Johnson et al. "Perceptual Losses for Real-Time Style Transfer"
 https://arxiv.org/abs/1603.08155
 """
 
-# Fix for gradio_client boolean schema bug - MUST be before importing gradio
-# Gradio 5.12+ installs gradio-client==1.5.4 which has the bug
-# We upgrade to 1.8.0+ which fixes it, then import gradio
+# Fix for gradio_client.cli module missing - MUST be before importing gradio
+# Gradio 5.x installs an older gradio-client that doesn't have the cli module
+# We upgrade gradio-client before importing gradio
 import sys
 import subprocess
 try:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "gradio-client>=1.8.0", "--quiet", "--no-deps"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "gradio-client>=1.10.0", "--quiet"])
 except Exception:
     pass  # Best effort - if it fails, continue anyway
+
+# Clear any cached gradio_client modules
+for module in list(sys.modules.keys()):
+    if 'gradio' in module:
+        del sys.modules[module]
 
 import gradio as gr
 import torch
