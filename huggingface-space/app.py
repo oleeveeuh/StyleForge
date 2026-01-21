@@ -24,6 +24,7 @@ import gradio_client.utils as _real_client_utils
 
 # Save the original get_type function
 _original_get_type = _real_client_utils.get_type
+_original_json_schema_to_python_type = _real_client_utils.json_schema_to_python_type
 
 def _patched_get_type(schema):
     """Patched version that handles when schema is a bool (False means "any type")"""
@@ -33,8 +34,26 @@ def _patched_get_type(schema):
     # Call original for everything else
     return _original_get_type(schema)
 
-# Replace the function
+def _patched_json_schema_to_python_type(schema, defs=None):
+    """Patched version that handles bool schemas at the top level"""
+    # Handle boolean schemas (True = any, False = none)
+    if isinstance(schema, bool):
+        if not schema:  # False means empty/no schema
+            return "Any"
+        return "Any"  # True also means any type in JSON schema
+    # Handle the case where schema is None
+    if schema is None:
+        return "Any"
+    # Call original for everything else
+    try:
+        return _original_json_schema_to_python_type(schema, defs)
+    except Exception:
+        # If original fails, return Any as fallback
+        return "Any"
+
+# Replace the functions
 _real_client_utils.get_type = _patched_get_type
+_real_client_utils.json_schema_to_python_type = _patched_json_schema_to_python_type
 
 # Now safe to import gradio
 import gradio as gr
