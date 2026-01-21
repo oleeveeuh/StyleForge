@@ -14,6 +14,56 @@ Based on Johnson et al. "Perceptual Losses for Real-Time Style Transfer"
 https://arxiv.org/abs/1603.08155
 """
 
+# ============================================================================
+# PATCH gradio_client BEFORE importing gradio
+# This fixes a bug where schema can be a bool (False means "any type")
+# ============================================================================
+import sys
+
+def _patched_get_type(schema):
+    """Patched version that handles when schema is a bool (False for any type)"""
+    if isinstance(schema, bool):
+        return "Any" if not schema else "bool"
+    if not isinstance(schema, dict):
+        return str(type(schema).__name__)
+    if "const" in schema:
+        return f"Literal[{repr(schema['const'])}]"
+    if "enum" in schema:
+        return f"Literal[{', '.join(repr(v) for v in schema['enum'])}]"
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if ref.startswith("#/$defs/"):
+            return ref.split("/")[-1]
+        return ref
+    if "type" in schema:
+        t = schema["type"]
+        if t == "string":
+            return "str"
+        elif t == "number":
+            return "float"
+        elif t == "integer":
+            return "int"
+        elif t == "boolean":
+            return "bool"
+        elif t == "array":
+            if "items" in schema:
+                items_type = _patched_get_type(schema["items"])
+                return f"list[{items_type}]"
+            return "list"
+        elif t == "object":
+            if "additionalProperties" in schema:
+                items_type = _patched_get_type(schema["additionalProperties"])
+                return f"dict[str, {items_type}]"
+            return "dict"
+    return "Any"
+
+# Pre-patch by installing in sys.modules before gradio imports it
+import types
+mock_client_utils = types.ModuleType('gradio_client.utils')
+mock_client_utils.get_type = _patched_get_type
+sys.modules['gradio_client.utils'] = mock_client_utils
+
+# Now safe to import gradio
 import gradio as gr
 import torch
 import torch.nn as nn
@@ -28,18 +78,6 @@ from datetime import datetime
 from collections import deque
 import tempfile
 import json
-
-# Workaround for gradio_client bug with dict schemas
-try:
-    from gradio_client import client_utils
-    original_get_type = client_utils.get_type
-    def patched_get_type(schema):
-        if isinstance(schema, bool):
-            return "bool" if schema else "Any"
-        return original_get_type(schema)
-    client_utils.get_type = patched_get_type
-except Exception:
-    pass  # Skip patching if structure is different
 
 # Try to import plotly for charts
 try:
