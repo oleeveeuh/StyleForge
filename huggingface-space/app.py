@@ -23,6 +23,7 @@ import time
 import os
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any
+from pydantic import BaseModel
 from datetime import datetime
 from collections import deque
 import tempfile
@@ -159,6 +160,26 @@ BACKENDS = {
 # Performance Tracking with Live Charts
 # ============================================================================
 
+class PerformanceStats(BaseModel):
+    """Pydantic model for performance stats - Gradio 5.x compatible"""
+    avg_ms: float
+    min_ms: float
+    max_ms: float
+    total_inferences: int
+    uptime_hours: float
+    cuda_avg: Optional[float] = None
+    cuda_count: Optional[int] = None
+    pytorch_avg: Optional[float] = None
+    pytorch_count: Optional[int] = None
+
+
+class ChartData(BaseModel):
+    """Pydantic model for chart data - Gradio 5.x compatible"""
+    timestamps: List[str]
+    times: List[float]
+    backends: List[str]
+
+
 class PerformanceTracker:
     """Track and display Space performance metrics with backend comparison"""
 
@@ -183,7 +204,7 @@ class PerformanceTracker:
             self.backend_times[backend].append(elapsed_ms)
         self.total_inferences += 1
 
-    def get_stats(self) -> Any:
+    def get_stats(self) -> Optional[PerformanceStats]:
         """Get performance statistics"""
         if not self.inference_times:
             return None
@@ -191,22 +212,31 @@ class PerformanceTracker:
         times = list(self.inference_times)
         uptime = (datetime.now() - self.start_time).total_seconds()
 
-        stats = {
-            'avg_ms': sum(times) / len(times),
-            'min_ms': min(times),
-            'max_ms': max(times),
-            'total_inferences': self.total_inferences,
-            'uptime_hours': uptime / 3600,
-        }
+        # Get backend-specific stats
+        cuda_avg, cuda_count = None, None
+        pytorch_avg, pytorch_count = None, None
 
-        # Backend-specific stats
-        for backend, times_deque in self.backend_times.items():
-            if times_deque:
-                bt = list(times_deque)
-                stats[f'{backend}_avg'] = sum(bt) / len(bt)
-                stats[f'{backend}_count'] = len(bt)
+        if self.backend_times['cuda']:
+            bt = list(self.backend_times['cuda'])
+            cuda_avg = sum(bt) / len(bt)
+            cuda_count = len(bt)
 
-        return stats
+        if self.backend_times['pytorch']:
+            bt = list(self.backend_times['pytorch'])
+            pytorch_avg = sum(bt) / len(bt)
+            pytorch_count = len(bt)
+
+        return PerformanceStats(
+            avg_ms=sum(times) / len(times),
+            min_ms=min(times),
+            max_ms=max(times),
+            total_inferences=self.total_inferences,
+            uptime_hours=uptime / 3600,
+            cuda_avg=cuda_avg,
+            cuda_count=cuda_count,
+            pytorch_avg=pytorch_avg,
+            pytorch_count=pytorch_count,
+        )
 
     def get_comparison(self) -> str:
         """Get backend comparison string"""
@@ -229,16 +259,16 @@ class PerformanceTracker:
 ### Speedup: {speedup:.2f}x faster with CUDA! 🚀
 """
 
-    def get_chart_data(self) -> Any:
+    def get_chart_data(self) -> Optional[ChartData]:
         """Get data for real-time chart"""
         if not self.timestamps:
             return None
 
-        return {
-            'timestamps': [ts.strftime('%H:%M:%S') for ts in self.timestamps],
-            'times': list(self.inference_times),
-            'backends': list(self.backends_used),
-        }
+        return ChartData(
+            timestamps=[ts.strftime('%H:%M:%S') for ts in self.timestamps],
+            times=list(self.inference_times),
+            backends=list(self.backends_used),
+        )
 
 # Global tracker
 perf_tracker = PerformanceTracker()
@@ -1243,7 +1273,7 @@ def create_performance_chart() -> str:
         return "### Chart Unavailable\n\nPlotly is not installed. Install with: `pip install plotly`"
 
     data = perf_tracker.get_chart_data()
-    if not data or len(data['timestamps']) < 2:
+    if not data or len(data.timestamps) < 2:
         return "### Performance Chart\n\nRun some inferences to see the chart populate..."
 
     # Color mapping for backends
@@ -1256,13 +1286,13 @@ def create_performance_chart() -> str:
     # Create scatter plot with color-coded backends
     fig = go.Figure()
 
-    for backend in set(data['backends']):
+    for backend in set(data.backends):
         backend_times = []
         backend_timestamps = []
-        for i, b in enumerate(data['backends']):
+        for i, b in enumerate(data.backends):
             if b == backend:
-                backend_times.append(data['times'][i])
-                backend_timestamps.append(data['timestamps'][i])
+                backend_times.append(data.times[i])
+                backend_timestamps.append(data.timestamps[i])
 
         if backend_times:
             fig.add_trace(go.Scatter(
@@ -1451,8 +1481,8 @@ def stylize_image_impl(
 | **Style** | {style_display} |
 | **Backend** | {backend_display} |
 | **Time** | {elapsed_ms:.1f} ms ({fps:.0f} FPS) |
-| **Avg Time** | {stats['avg_ms']:.1f if stats else elapsed_ms:.1f} ms |
-| **Total Images** | {stats['total_inferences'] if stats else 1} |
+| **Avg Time** | {stats.avg_ms:.1f if stats else elapsed_ms:.1f} ms |
+| **Total Images** | {stats.total_inferences if stats else 1} |
 | **Size** | {width}x{height} |
 | **Device** | {get_device().type.upper()} |
 
@@ -1618,11 +1648,11 @@ def get_performance_stats() -> str:
 
 | Metric | Value |
 |--------|-------|
-| **Avg Time** | {stats['avg_ms']:.1f} ms |
-| **Fastest** | {stats['min_ms']:.1f} ms |
-| **Slowest** | {stats['max_ms']:.1f} ms |
-| **Total Images** | {stats['total_inferences']} |
-| **Uptime** | {stats['uptime_hours']:.1f} hours |
+| **Avg Time** | {stats.avg_ms:.1f} ms |
+| **Fastest** | {stats.min_ms:.1f} ms |
+| **Slowest** | {stats.max_ms:.1f} ms |
+| **Total Images** | {stats.total_inferences} |
+| **Uptime** | {stats.uptime_hours:.1f} hours |
 
 ---
 {perf_tracker.get_comparison()}
