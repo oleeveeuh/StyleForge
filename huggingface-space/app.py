@@ -186,6 +186,11 @@ STYLES = {
     'mosaic': 'Mosaic',
     'rain_princess': 'Rain Princess',
     'udnie': 'Udnie',
+    'la_muse': 'La Muse',
+    'starry_night': 'Starry Night',
+    'the_scream': 'The Scream',
+    'feathers': 'Feathers',
+    'composition_vii': 'Composition VII',
 }
 
 STYLE_DESCRIPTIONS = {
@@ -193,6 +198,11 @@ STYLE_DESCRIPTIONS = {
     'mosaic': 'Fragmented, tile-like artistic reconstruction',
     'rain_princess': 'Moody, impressionistic with subtle textures',
     'udnie': 'Bold, abstract expressionist style',
+    'la_muse': 'Romantic, soft colors with gentle brushstrokes',
+    'starry_night': 'Inspired by Van Gogh\'s iconic swirling masterpiece',
+    'the_scream': 'Edvard Munch\'s anxious expressionist style',
+    'feathers': 'Soft, delicate textures with flowing patterns',
+    'composition_vii': 'Kandinsky-inspired abstract geometric forms',
 }
 
 # Backend options
@@ -620,6 +630,11 @@ def get_model_path(style: str) -> Path:
             'mosaic': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/mosaic.pth',
             'udnie': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/udnie.pth',
             'rain_princess': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/rain-princess.pth',
+            'la_muse': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/la-muse.pth',
+            'starry_night': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/starry-night.pth',
+            'the_scream': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/the-scream.pth',
+            'feathers': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/feathers.pth',
+            'composition_vii': 'https://github.com/yakhyo/fast-neural-style-transfer/releases/download/v1.0/composition-vii.pth',
         }
 
         if style not in url_map:
@@ -1893,15 +1908,15 @@ custom_css = """
    Gradio 5.x Compatible
    ============================================ */
 
-/* Import Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Import Google Fonts - Plus Jakarta Sans for premium Framer-style look */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200;300;400;500;600;700;800&display=swap');
 
 /* Animated gradient background */
 body {
     background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
     background-size: 400% 400%;
     animation: gradientBG 15s ease infinite;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
     min-height: 100vh;
 }
 
@@ -1913,7 +1928,7 @@ body {
 
 /* Universal font application */
 * {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
 /* Ensure text elements are visible */
@@ -1934,7 +1949,7 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, button, input, textarea, select {
     padding: 24px !important;
 }
 
-/* Primary button - enhanced glass effect with full width */
+/* Primary button - enhanced glass effect with Framer-style typography */
 button.primary,
 .gr-button-primary,
 [class*="primary"] {
@@ -1946,8 +1961,10 @@ button.primary,
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, 0.4) !important;
     color: #4F46E5 !important;
-    font-weight: 700 !important;
-    border-radius: 20px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.01em !important;
+    border-radius: 16px !important;
     padding: 16px 32px !important;
     transition: all 0.3s ease !important;
     box-shadow:
@@ -1957,7 +1974,7 @@ button.primary,
     position: relative;
     overflow: hidden;
     width: 100% !important;
-    min-height: 56px !important;
+    min-height: 52px !important;
 }
 
 button.primary::before,
@@ -2006,7 +2023,7 @@ button.primary:active,
         inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
 
-/* Secondary button - enhanced glass style */
+/* Secondary button - enhanced glass style with Framer typography */
 button.secondary,
 .gr-button-secondary,
 .download,
@@ -2018,16 +2035,18 @@ button.secondary,
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, 0.5) !important;
     color: #374151 !important;
-    border-radius: 20px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    border-radius: 14px !important;
     padding: 14px 28px !important;
     transition: all 0.3s ease !important;
-    font-weight: 600 !important;
+    font-weight: 500 !important;
+    letter-spacing: -0.005em !important;
     box-shadow:
         0 8px 32px rgba(31, 38, 135, 0.12),
         inset 0 1px 0 rgba(255, 255, 255, 0.6),
         inset 0 -1px 0 rgba(0, 0, 0, 0.03) !important;
     width: 100% !important;
-    min-height: 52px !important;
+    min-height: 48px !important;
 }
 
 button.secondary:hover,
@@ -2044,10 +2063,11 @@ button.secondary:hover,
     transform: translateY(-1px);
 }
 
-/* All buttons - full width in containers */
+/* All buttons - Framer-style rounded corners and typography */
 button,
 .gr-button {
-    border-radius: 20px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    border-radius: 14px !important;
     transition: all 0.3s ease !important;
     width: 100% !important;
 }
@@ -2185,20 +2205,28 @@ input[type="radio"] {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-/* Markdown content */
+/* Markdown content with Framer-style typography */
 .markdown {
     color: #374151 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 
-/* Text visibility fixes */
-.gradio-container,
-.gradio-container *,
+/* Headings with Framer-style typography - tighter letter spacing */
 .gradio-container h1,
 .gradio-container h2,
 .gradio-container h3,
 .gradio-container h4,
 .gradio-container h5,
-.gradio-container h6,
+.gradio-container h6 {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #1F2937 !important;
+    letter-spacing: -0.025em !important;
+    font-weight: 600 !important;
+}
+
+/* Text visibility fixes */
+.gradio-container,
+.gradio-container *,
 .gradio-container p,
 .gradio-container span,
 .gradio-container label {
@@ -2211,23 +2239,26 @@ button,
     color: inherit !important;
 }
 
-/* Input and select text colors */
+/* Input and select text colors with Framer-style typography */
 input,
 textarea,
 select {
     color: #1F2937 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 
-/* Label colors */
+/* Label colors with Framer-style typography */
 label,
 [class*="label"] {
     color: #374151 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
     font-weight: 500 !important;
+    letter-spacing: -0.01em !important;
 }
 
 /* Gradio 5.x specific text elements */
 .svelte-*, [class*="svelte-"] {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
 }
 
 /* Group/Row/Column containers */
@@ -2345,7 +2376,7 @@ with gr.Blocks(
     theme=gr.themes.Glass(
         primary_hue="indigo",
         secondary_hue="purple",
-        font=gr.themes.GoogleFont("Inter"),
+        font=gr.themes.GoogleFont("Plus Jakarta Sans"),
         radius_size="lg",
     ),
     css=custom_css,
@@ -2355,21 +2386,21 @@ with gr.Blocks(
     gr.HTML("""
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet">
     """)
 
     # Header with Portal-style hero section
     cuda_badge = f"<span class='backend-badge'>CUDA Accelerated</span>" if CUDA_KERNELS_AVAILABLE else ""
     gr.HTML(f"""
-    <div style="text-align: center; padding: 3rem 0 2rem 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
-        <h1 style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">
+    <div style="text-align: center; padding: 3rem 0 2rem 0; font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <h1 style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 3.5rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; letter-spacing: -0.02em;">
             StyleForge
         </h1>
-        <p style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #6B7280; font-size: 1.1rem; margin-bottom: 1rem;">
+        <p style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #6B7280; font-size: 1.15rem; margin-bottom: 1rem; font-weight: 400;">
             Neural Style Transfer with Custom CUDA Kernels
         </p>
         {cuda_badge}
-        <p style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #9CA3AF; margin-top: 1rem; font-size: 0.9rem;">
+        <p style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #9CA3AF; margin-top: 1rem; font-size: 0.95rem; font-weight: 300;">
             Custom Styles • Region Transfer • Style Blending • Real-time Processing
         </p>
     </div>
@@ -2793,29 +2824,49 @@ with gr.Blocks(
             [example_img, "mosaic", "auto", 70, False, False],
             [example_img, "rain_princess", "auto", 70, True, False],
             [example_img, "udnie", "auto", 70, False, False],
+            [example_img, "starry_night", "auto", 70, False, False],
+            [example_img, "la_muse", "auto", 70, False, False],
+            [example_img, "the_scream", "auto", 70, False, False],
+            [example_img, "composition_vii", "auto", 70, False, False],
         ],
         inputs=[quick_image, quick_style, quick_backend, quick_intensity, quick_compare, quick_watermark],
         label="Style Presets (click to load)"
     )
 
-    # Display example style gallery
+    # Display example style gallery with unique gradients for each style
     gr.Markdown("""
-    <div style="display: flex; gap: 1rem; justify-content: center; margin: 1rem 0; flex-wrap: wrap;">
+    <div style="display: flex; gap: 0.8rem; justify-content: center; margin: 1rem 0; flex-wrap: wrap;">
         <div style="text-align: center;">
-            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #ff6b6b, #feca57); border-radius: 8px; margin: 0 auto;"></div>
-            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🍬 Candy</p>
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #ff6b6b, #feca57); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🍬 Candy</p>
         </div>
         <div style="text-align: center;">
-            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #5f27cd, #00d2d3); border-radius: 8px; margin: 0 auto;"></div>
-            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🎨 Mosaic</p>
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #5f27cd, #00d2d3); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(95, 39, 205, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🎨 Mosaic</p>
         </div>
         <div style="text-align: center;">
-            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #576574, #c8d6e5); border-radius: 8px; margin: 0 auto;"></div>
-            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🌧️ Rain Princess</p>
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #576574, #c8d6e5); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(87, 101, 116, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🌧️ Rain Princess</p>
         </div>
         <div style="text-align: center;">
-            <div style="width: 120px; height: 120px; background: linear-gradient(135deg, #ee5a24, #f9ca24); border-radius: 8px; margin: 0 auto;"></div>
-            <p style="margin-top: 0.5rem; font-size: 0.85rem;">🖼️ Udnie</p>
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #ee5a24, #f9ca24); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(238, 90, 36, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🖼️ Udnie</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #1e3a8a, #fbbf24, #3b82f6); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(30, 58, 138, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🌃 Starry Night</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #be185d, #fce7f3, #9d174d); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(190, 24, 93, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🎭 La Muse</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #dc2626, #1f2937, #f97316); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(220, 38, 38, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">😱 The Scream</p>
+        </div>
+        <div style="text-align: center;">
+            <div style="width: 100px; height: 100px; background: linear-gradient(135deg, #7c3aed, #2563eb, #db2777); border-radius: 12px; margin: 0 auto; box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);"></div>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; font-weight: 500;">🎪 Composition VII</p>
         </div>
     </div>
     """)
