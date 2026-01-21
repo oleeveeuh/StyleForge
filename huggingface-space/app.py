@@ -1733,123 +1733,52 @@ def create_style_blend_output(
 
 custom_css = """
 /* ============================================
-   PORTAL-INSPIRED CLEAN LIGHT THEME
+   CLEAN LIGHT THEME
    ============================================ */
-
-/* Root variables for clean light theme */
-:root {
-    --bg-primary: #FAFAFA;
-    --bg-secondary: #FFFFFF;
-    --bg-tertiary: #F5F5F5;
-    --text-primary: #1A1A1A;
-    --text-secondary: #6B7280;
-    --text-tertiary: #9CA3AF;
-    --border-color: #E5E7EB;
-    --border-light: #F3F4F6;
-    --accent-primary: #6366F1;
-    --accent-secondary: #8B5CF6;
-    --accent-gradient: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --radius-xl: 24px;
-}
 
 /* Clean light background */
 body {
-    background: var(--bg-primary);
+    background: #FAFAFA;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    min-height: 100vh;
-    color: var(--text-primary);
 }
 
-/* Main container - clean and minimal */
+/* Main container */
 .gradio-container {
     max-width: 1200px;
     margin: 0 auto;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 2rem 1.5rem !important;
 }
 
-/* Clean card style for components */
-.gr-box {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-lg) !important;
-    box-shadow: var(--shadow-sm) !important;
-}
-
-.gr-image-container {
-    border-radius: var(--radius-md) !important;
-    overflow: hidden;
-    border: 1px solid var(--border-color) !important;
-    background: var(--bg-secondary) !important;
-}
-
-/* Primary button - clean, modern style */
+/* Primary button - clean gradient */
 .gr-button-primary {
-    background: var(--accent-gradient) !important;
+    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%) !important;
     border: none !important;
     color: white !important;
     font-weight: 600 !important;
-    font-size: 14px !important;
-    border-radius: var(--radius-md) !important;
-    padding: 12px 24px !important;
+    border-radius: 12px !important;
     transition: all 0.2s ease !important;
-    box-shadow: var(--shadow-md) !important;
 }
 
 .gr-button-primary:hover {
     transform: translateY(-1px);
-    box-shadow: var(--shadow-lg) !important;
-    filter: brightness(1.05);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
 }
 
-.gr-button-primary:active {
-    transform: translateY(0);
-}
-
-/* Secondary button - clean outline style */
+/* Secondary button */
 .gr-button-secondary {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    color: var(--text-primary) !important;
-    font-weight: 500 !important;
-    border-radius: var(--radius-md) !important;
-    transition: all 0.2s ease !important;
-    box-shadow: var(--shadow-sm) !important;
+    background: white !important;
+    border: 1px solid #E5E7EB !important;
+    color: #1A1A1A !important;
+    border-radius: 12px !important;
 }
 
 .gr-button-secondary:hover {
-    background: var(--bg-tertiary) !important;
-    border-color: var(--border-color) !important;
+    background: #F5F5F5 !important;
 }
 
-/* Dropdown styling - clean and minimal */
-.gr-dropdown {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    color: var(--text-primary) !important;
-}
-
-.gr-dropdown-options {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    box-shadow: var(--shadow-lg) !important;
-}
-
-/* Slider styling - clean modern look */
+/* Slider styling */
 input[type="range"] {
     -webkit-appearance: none;
-    background: var(--bg-tertiary);
+    background: #E5E7EB;
     border-radius: 4px;
     height: 6px;
 }
@@ -1858,114 +1787,13 @@ input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 18px;
     height: 18px;
-    background: var(--bg-secondary);
-    border: 3px solid var(--accent-primary);
+    background: white;
+    border: 3px solid #6366F1;
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: var(--shadow-md);
-    transition: all 0.2s ease;
 }
 
-input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-    box-shadow: var(--shadow-lg);
-}
-
-/* Radio buttons - clean style */
-.gr-radio {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    padding: 12px !important;
-}
-
-.gr-radio:hover {
-    background: var(--bg-tertiary) !important;
-}
-
-/* Tab styling - minimal pill style */
-.tabs {
-    background: var(--bg-tertiary) !important;
-    border-radius: var(--radius-lg) !important;
-    border: none !important;
-    padding: 6px !important;
-    gap: 4px !important;
-}
-
-.tab-item {
-    background: transparent !important;
-    border-radius: var(--radius-md) !important;
-    transition: all 0.2s ease !important;
-    color: var(--text-secondary) !important;
-    font-weight: 500 !important;
-    padding: 10px 18px !important;
-}
-
-.tab-item:hover {
-    background: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-}
-
-.tab-item.selected {
-    background: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-    box-shadow: var(--shadow-sm) !important;
-    font-weight: 600 !important;
-}
-
-/* Accordion styling - clean */
-details {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    overflow: hidden;
-}
-
-summary {
-    background: transparent !important;
-    border-radius: var(--radius-md) !important;
-    padding: 16px !important;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    color: var(--text-primary) !important;
-    font-weight: 500 !important;
-}
-
-summary:hover {
-    background: var(--bg-tertiary) !important;
-}
-
-/* Headings - clean typography */
-h1 {
-    text-align: center;
-    color: var(--text-primary) !important;
-    background: var(--accent-gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-weight: 700;
-    font-size: 2.5rem;
-    letter-spacing: -0.03em;
-    margin-bottom: 0.5rem;
-}
-
-h2, h3 {
-    color: var(--text-primary) !important;
-    font-weight: 600 !important;
-    letter-spacing: -0.02em;
-}
-
-/* Markdown text color */
-.markdown {
-    color: var(--text-secondary) !important;
-}
-
-.markdown strong {
-    color: var(--text-primary) !important;
-    font-weight: 600;
-}
-
-/* Badge styles - clean pill design */
+/* Badge styles */
 .live-badge {
     display: inline-block;
     padding: 4px 12px;
@@ -1974,7 +1802,6 @@ h2, h3 {
     border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
-    border: 1px solid #FDE68A;
 }
 
 .backend-badge {
@@ -1985,170 +1812,22 @@ h2, h3 {
     border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
-    border: 1px solid #A7F3D0;
 }
 
-/* Checkbox styling */
-.gr-checkbox {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 6px !important;
-}
-
-/* Text input / Textbox */
-.gr-textbox, .gr-text-input {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    color: var(--text-primary) !important;
-}
-
-.gr-textbox:focus, .gr-text-input:focus {
-    border-color: var(--accent-primary) !important;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1) !important;
-    outline: none;
-}
-
-/* Footer - clean minimal */
-.footer {
-    text-align: center;
-    margin-top: 3rem;
-    padding: 2rem;
-    background: transparent;
-    border-top: 1px solid var(--border-color);
-    color: var(--text-secondary);
-}
-
-.footer a {
-    color: var(--accent-primary) !important;
-    text-decoration: none;
-    font-weight: 500;
-    transition: color 0.2s ease;
-}
-
-.footer a:hover {
-    color: var(--accent-secondary) !important;
-}
-
-/* Info/Stats boxes */
-.gr-markdown {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    padding: 16px 20px !important;
-}
-
-.gr-markdown blockquote {
-    border-left: 3px solid var(--accent-primary) !important;
-    background: var(--bg-tertiary) !important;
-    padding: 12px 16px !important;
-    border-radius: var(--radius-sm) !important;
-    color: var(--text-secondary) !important;
-}
-
-/* Scrollbar styling - subtle */
+/* Scrollbar */
 ::-webkit-scrollbar {
     width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--border-color);
+    background: #E5E7EB;
     border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: var(--text-tertiary);
-}
-
-/* Example cards - clean hover effect */
-.gr-example {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    transition: all 0.2s ease !important;
-}
-
-.gr-example:hover {
-    border-color: var(--accent-primary) !important;
-    box-shadow: var(--shadow-md) !important;
-}
-
-/* Remove floating orbs - cleaner look */
-.gradio-container::before,
-.gradio-container::after {
-    display: none;
-}
-
-/* Label styling */
-label {
-    color: var(--text-secondary) !important;
-    font-weight: 500 !important;
-    font-size: 14px !important;
-}
-
-/* Progress bar */
-.prog {
-    background: var(--bg-tertiary) !important;
-    border-radius: 4px !important;
-}
-
-.prog .prog-bar {
-    background: var(--accent-gradient) !important;
-    border-radius: 4px !important;
-}
-
-/* Gallery/output styling */
-.output {
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-md) !important;
-    background: var(--bg-secondary) !important;
-}
-
-/* Form container styling */
-.form {
-    background: transparent !important;
-    border: none !important;
-    gap: 1rem !important;
-}
-
-/* Group styling */
-.group {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: var(--radius-lg) !important;
-    padding: 1.5rem !important;
-}
-
-/* Mobile optimization */
+/* Mobile */
 @media (max-width: 768px) {
     .gradio-container {
         padding: 1rem !important;
-    }
-
-    .gr-row {
-        flex-direction: column !important;
-        gap: 1rem !important;
-    }
-
-    .gr-column {
-        width: 100% !important;
-    }
-
-    h1 {
-        font-size: 2rem;
-    }
-
-    .gr-button-primary {
-        padding: 10px 20px !important;
-    }
-
-    .tabs {
-        flex-wrap: wrap !important;
     }
 }
 """
@@ -2168,14 +1847,14 @@ with gr.Blocks(
     cuda_badge = f"<span class='backend-badge'>CUDA Accelerated</span>" if CUDA_KERNELS_AVAILABLE else ""
     gr.Markdown(f"""
     <div style="text-align: center; padding: 3rem 0 2rem 0;">
-        <h1 style="font-size: 3.5rem; margin-bottom: 0.75rem; letter-spacing: -0.04em; line-height: 1.1;">
-            Your beautiful neural style transfer toolkit
+        <h1 style="font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">
+            StyleForge
         </h1>
-        <p style="color: var(--text-secondary); font-size: 1.25rem; margin-bottom: 1.5rem; max-width: 600px; margin-left: auto; margin-right: auto; line-height: 1.6;">
-            Transform images with stunning artistic styles. From classic masterpieces to modern abstract art.
+        <p style="color: #6B7280; font-size: 1.1rem; margin-bottom: 1rem;">
+            Neural Style Transfer with Custom CUDA Kernels
         </p>
         {cuda_badge}
-        <p style="color: var(--text-tertiary); margin-top: 1.5rem; font-size: 0.9rem;">
+        <p style="color: #9CA3AF; margin-top: 1rem; font-size: 0.9rem;">
             Custom Styles • Region Transfer • Style Blending • Real-time Processing
         </p>
     </div>
