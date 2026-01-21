@@ -12,8 +12,12 @@ from pathlib import Path
 from typing import Optional
 import os
 
-# Check if running on ZeroGPU
-_ZERO_GPU = os.environ.get('SPACE_ID', '').startswith('hf.co') or os.environ.get('ZERO_GPU') == '1'
+# Check if running on ZeroGPU - use same detection as app.py
+try:
+    from spaces import GPU
+    _ZERO_GPU = True
+except ImportError:
+    _ZERO_GPU = False
 
 # Import local build utilities (only if not on ZeroGPU)
 if not _ZERO_GPU:

@@ -16,8 +16,13 @@ _FusedInstanceNorm2d = None
 _KERNELS_COMPILED = False
 _LOADED_KERNEL_FUNC = None
 
-# Check if running on ZeroGPU
-_ZERO_GPU = os.environ.get('SPACE_ID', '').startswith('hf.co') or os.environ.get('ZERO_GPU') == '1'
+# Check if running on ZeroGPU or HuggingFace Spaces
+# Use the same detection as app.py - presence of spaces package
+try:
+    from spaces import GPU
+    _ZERO_GPU = True
+except ImportError:
+    _ZERO_GPU = False
 
 # Path to pre-compiled kernels
 _PREBUILT_PATH = Path(__file__).parent / "prebuilt"
@@ -116,13 +121,15 @@ def load_prebuilt_kernels():
     kernel_files = list(kernels_dir.glob("*.so")) + list(kernels_dir.glob("*.pyd"))
     kernel_files += list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
 
-    # On HuggingFace Spaces, try downloading from dataset if not found locally
-    if not kernel_files and _ZERO_GPU:
-        print("No local pre-compiled kernels found. Trying HuggingFace dataset...")
-        if _download_kernels_from_dataset():
-            # Check again after download - look in kernels directory
-            kernel_files = list(kernels_dir.glob("*.so")) + list(kernels_dir.glob("*.pyd"))
-            kernel_files += list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
+    # Try downloading from dataset if not found locally (on ZeroGPU or if CUDA available)
+    if not kernel_files:
+        print(f"No local pre-compiled kernels found. _ZERO_GPU={_ZERO_GPU}")
+        if _ZERO_GPU or torch.cuda.is_available():
+            print("Trying HuggingFace dataset...")
+            if _download_kernels_from_dataset():
+                # Check again after download - look in kernels directory
+                kernel_files = list(kernels_dir.glob("*.so")) + list(kernels_dir.glob("*.pyd"))
+                kernel_files += list(_PREBUILT_PATH.glob("*.so")) + list(_PREBUILT_PATH.glob("*.pyd"))
 
     if not kernel_files:
         print("No pre-compiled kernels found")
