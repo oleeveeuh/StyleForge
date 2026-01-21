@@ -1801,108 +1801,338 @@ def create_style_blend_output(
 
 custom_css = """
 /* ============================================
-   CLEAN LIGHT THEME
+   LIQUID GLASS / GLASSMORPHISM THEME
+   Gradio 5.x Compatible
    ============================================ */
 
-/* Clean light background */
+/* Animated gradient background */
 body {
-    background: #FAFAFA;
+    background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+    background-size: 400% 400%;
+    animation: gradientBG 15s ease infinite;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
 }
 
-/* Main container */
+@keyframes gradientBG {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* Main app container - glass effect */
 .gradio-container {
-    max-width: 1200px;
-    margin: 0 auto;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(255, 255, 255, 0.75) !important;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+    max-width: 1400px;
+    margin: 20px auto;
+    padding: 24px !important;
 }
 
-/* Primary button - clean gradient */
-.gr-button-primary {
-    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%) !important;
-    border: none !important;
+/* Primary button - gradient with glass shimmer */
+button.primary,
+.gr-button-primary,
+[class*="primary"] {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
     color: white !important;
     font-weight: 600 !important;
+    border-radius: 16px !important;
+    padding: 12px 24px !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25) !important;
+    position: relative;
+    overflow: hidden;
+}
+
+button.primary:hover,
+.gr-button-primary:hover,
+[class*="primary"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4) !important;
+}
+
+button.primary:active,
+.gr-button-primary:active,
+[class*="primary"]:active {
+    transform: translateY(0);
+}
+
+/* Secondary button - glass style */
+button.secondary,
+.gr-button-secondary,
+.download,
+[class*="secondary"] {
+    background: rgba(255, 255, 255, 0.6) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    color: #374151 !important;
+    border-radius: 16px !important;
+    padding: 10px 20px !important;
+    transition: all 0.3s ease !important;
+    font-weight: 500 !important;
+}
+
+button.secondary:hover,
+.gr-button-secondary:hover,
+.download:hover,
+[class*="secondary"]:hover {
+    background: rgba(255, 255, 255, 0.8) !important;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* All buttons */
+button {
     border-radius: 12px !important;
     transition: all 0.2s ease !important;
 }
 
-.gr-button-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
+/* Tabs - glass style */
+.tabs {
+    background: rgba(255, 255, 255, 0.4) !important;
+    backdrop-filter: blur(10px);
+    border-radius: 16px !important;
+    padding: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
 }
 
-/* Secondary button */
-.gr-button-secondary {
-    background: white !important;
-    border: 1px solid #E5E7EB !important;
-    color: #1A1A1A !important;
+/* Tab buttons */
+button.tab-item {
+    background: transparent !important;
     border-radius: 12px !important;
+    color: #6B7280 !important;
+    transition: all 0.3s ease !important;
 }
 
-.gr-button-secondary:hover {
-    background: #F5F5F5 !important;
+button.tab-item:hover {
+    background: rgba(255, 255, 255, 0.5) !important;
+}
+
+button.tab-item.selected {
+    background: rgba(255, 255, 255, 0.8) !important;
+    color: #6366F1 !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Input boxes and text areas */
+input[type="text"],
+input[type="number"],
+textarea,
+select {
+    background: rgba(255, 255, 255, 0.7) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+textarea:focus,
+select:focus {
+    background: rgba(255, 255, 255, 0.9) !important;
+    border-color: #6366F1 !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1) !important;
+    outline: none !important;
+}
+
+/* Image containers - glass frame */
+.image-container,
+[class*="image"] {
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    overflow: hidden !important;
+    background: rgba(255, 255, 255, 0.3) !important;
 }
 
 /* Slider styling */
 input[type="range"] {
     -webkit-appearance: none;
-    background: #E5E7EB;
-    border-radius: 4px;
-    height: 6px;
+    background: rgba(229, 231, 235, 0.6);
+    backdrop-filter: blur(10px);
+    border-radius: 8px;
+    height: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    background: white;
-    border: 3px solid #6366F1;
+    width: 22px;
+    height: 22px;
+    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+    border: 3px solid white;
     border-radius: 50%;
     cursor: pointer;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+    border: 3px solid white;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+}
+
+/* Checkbox and radio styling */
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: #6366F1 !important;
+    width: 18px !important;
+    height: 18px !important;
 }
 
 /* Badge styles */
 .live-badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: #FEF3C7;
+    padding: 6px 16px;
+    background: rgba(254, 243, 199, 0.8);
+    backdrop-filter: blur(10px);
     color: #92400E;
-    border-radius: 20px;
-    font-size: 12px;
+    border-radius: 24px;
+    font-size: 13px;
     font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .backend-badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: #D1FAE5;
+    padding: 6px 16px;
+    background: rgba(209, 250, 229, 0.8);
+    backdrop-filter: blur(10px);
     color: #065F46;
-    border-radius: 20px;
-    font-size: 12px;
+    border-radius: 24px;
+    font-size: 13px;
     font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-/* Scrollbar */
+/* Markdown content */
+.markdown {
+    color: #374151 !important;
+}
+
+/* Group/Row/Column containers */
+.group,
+.row,
+.column {
+    background: rgba(255, 255, 255, 0.3) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+}
+
+/* Accordion */
+.details {
+    background: rgba(255, 255, 255, 0.4) !important;
+    backdrop-filter: blur(10px);
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Scrollbar - glass style */
 ::-webkit-scrollbar {
-    width: 8px;
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.3);
+    border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #E5E7EB;
-    border-radius: 4px;
+    background: rgba(167, 139, 250, 0.5);
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
 }
 
-/* Mobile */
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.7);
+}
+
+/* Progress bar */
+progress {
+    background: rgba(229, 231, 235, 0.5) !important;
+    border-radius: 8px !important;
+    height: 8px !important;
+}
+
+progress::-webkit-progress-bar {
+    background: rgba(229, 231, 235, 0.5);
+    border-radius: 8px;
+}
+
+progress::-webkit-progress-value {
+    background: linear-gradient(90deg, #6366F1, #8B5CF6) !important;
+    border-radius: 8px;
+}
+
+/* Mobile responsive */
 @media (max-width: 768px) {
     .gradio-container {
-        padding: 1rem !important;
+        margin: 10px !important;
+        padding: 16px !important;
+        border-radius: 20px !important;
     }
+
+    button.primary,
+    .gr-button-primary,
+    [class*="primary"] {
+        padding: 10px 18px !important;
+        font-size: 14px !important;
+    }
+}
+
+/* Loading spinner */
+.spinner {
+    border: 3px solid rgba(99, 102, 241, 0.2);
+    border-top: 3px solid #6366F1;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Additional Gradio 5.x specific selectors */
+.gradio-button.primary,
+button[class*="Primary"],
+[type="button"].primary {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25) !important;
+}
+
+/* Block containers */
+.block {
+    background: rgba(255, 255, 255, 0.25) !important;
+    border-radius: 16px !important;
+    padding: 12px !important;
+}
+
+/* Form elements */
+.form,
+.form-group {
+    background: transparent !important;
 }
 """
 
 with gr.Blocks(
     title="StyleForge: Neural Style Transfer",
-    theme=gr.themes.Base(
+    theme=gr.themes.Glass(
         primary_hue="indigo",
         secondary_hue="purple",
         font=gr.themes.GoogleFont("Inter"),
