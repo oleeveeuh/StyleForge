@@ -15,53 +15,26 @@ https://arxiv.org/abs/1603.08155
 """
 
 # ============================================================================
-# PATCH gradio_client BEFORE importing gradio
-# This fixes a bug where schema can be a bool (False means "any type")
+# PATCH gradio_client to fix bool schema bug
 # ============================================================================
 import sys
 
+# First import the real module to get all its contents
+import gradio_client.utils as _real_client_utils
+
+# Save the original get_type function
+_original_get_type = _real_client_utils.get_type
+
 def _patched_get_type(schema):
-    """Patched version that handles when schema is a bool (False for any type)"""
+    """Patched version that handles when schema is a bool (False means "any type")"""
+    # Fix the bug: check if schema is a bool before trying "in" operator
     if isinstance(schema, bool):
         return "Any" if not schema else "bool"
-    if not isinstance(schema, dict):
-        return str(type(schema).__name__)
-    if "const" in schema:
-        return f"Literal[{repr(schema['const'])}]"
-    if "enum" in schema:
-        return f"Literal[{', '.join(repr(v) for v in schema['enum'])}]"
-    if "$ref" in schema:
-        ref = schema["$ref"]
-        if ref.startswith("#/$defs/"):
-            return ref.split("/")[-1]
-        return ref
-    if "type" in schema:
-        t = schema["type"]
-        if t == "string":
-            return "str"
-        elif t == "number":
-            return "float"
-        elif t == "integer":
-            return "int"
-        elif t == "boolean":
-            return "bool"
-        elif t == "array":
-            if "items" in schema:
-                items_type = _patched_get_type(schema["items"])
-                return f"list[{items_type}]"
-            return "list"
-        elif t == "object":
-            if "additionalProperties" in schema:
-                items_type = _patched_get_type(schema["additionalProperties"])
-                return f"dict[str, {items_type}]"
-            return "dict"
-    return "Any"
+    # Call original for everything else
+    return _original_get_type(schema)
 
-# Pre-patch by installing in sys.modules before gradio imports it
-import types
-mock_client_utils = types.ModuleType('gradio_client.utils')
-mock_client_utils.get_type = _patched_get_type
-sys.modules['gradio_client.utils'] = mock_client_utils
+# Replace the function
+_real_client_utils.get_type = _patched_get_type
 
 # Now safe to import gradio
 import gradio as gr
