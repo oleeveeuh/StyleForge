@@ -2304,18 +2304,25 @@ with gr.Blocks(
     css=custom_css,
 ) as demo:
 
+    # Load Google Fonts via HTML head injection
+    gr.HTML("""
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    """)
+
     # Header with Portal-style hero section
     cuda_badge = f"<span class='backend-badge'>CUDA Accelerated</span>" if CUDA_KERNELS_AVAILABLE else ""
-    gr.Markdown(f"""
-    <div style="text-align: center; padding: 3rem 0 2rem 0;">
-        <h1 style="font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">
+    gr.HTML(f"""
+    <div style="text-align: center; padding: 3rem 0 2rem 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <h1 style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #6366F1, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">
             StyleForge
         </h1>
-        <p style="color: #6B7280; font-size: 1.1rem; margin-bottom: 1rem;">
+        <p style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #6B7280; font-size: 1.1rem; margin-bottom: 1rem;">
             Neural Style Transfer with Custom CUDA Kernels
         </p>
         {cuda_badge}
-        <p style="color: #9CA3AF; margin-top: 1rem; font-size: 0.9rem;">
+        <p style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #9CA3AF; margin-top: 1rem; font-size: 0.9rem;">
             Custom Styles • Region Transfer • Style Blending • Real-time Processing
         </p>
     </div>
