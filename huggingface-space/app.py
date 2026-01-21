@@ -2477,8 +2477,4 @@ with gr.Blocks(
 # ============================================================================
 
 if __name__ == "__main__":
-    demo.launch(
-        # share=True is not supported on HuggingFace Spaces
-        # show_api=True can cause issues with some gradio_client versions
-        show_api=False
-    )
+    demo.launch()
