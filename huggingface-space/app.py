@@ -1596,14 +1596,10 @@ def apply_region_style_ui(
     return result, mask_overlay
 
 
-def refresh_styles_list():
+def refresh_styles_list() -> list:
     """Refresh styles list including custom styles."""
     custom = get_custom_styles()
-    style_list = list(STYLES.keys()) + custom
-
-    # Update dropdown choices
-    choices = style_list
-    return gr.update(choices=choices, value=choices[0] if choices else 'candy')
+    return list(STYLES.keys()) + custom
 
 
 def get_style_description(style: str) -> str:
@@ -1841,8 +1837,6 @@ with gr.Blocks(
         radius_size="lg",
     ),
     css=custom_css,
-    delete_cache=(0, 0),
-    analytics_enabled=False,
 ) as demo:
 
     # Header with Portal-style hero section
