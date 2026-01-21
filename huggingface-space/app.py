@@ -29,6 +29,18 @@ from collections import deque
 import tempfile
 import json
 
+# Workaround for gradio_client bug with dict schemas
+try:
+    from gradio_client import client_utils
+    original_get_type = client_utils.get_type
+    def patched_get_type(schema):
+        if isinstance(schema, bool):
+            return "bool" if schema else "Any"
+        return original_get_type(schema)
+    client_utils.get_type = patched_get_type
+except Exception:
+    pass  # Skip patching if structure is different
+
 # Try to import plotly for charts
 try:
     import plotly.graph_objects as go
