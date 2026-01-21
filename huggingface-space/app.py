@@ -22,7 +22,7 @@ import numpy as np
 import time
 import os
 from pathlib import Path
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Any
 from datetime import datetime
 from collections import deque
 import tempfile
@@ -183,7 +183,7 @@ class PerformanceTracker:
             self.backend_times[backend].append(elapsed_ms)
         self.total_inferences += 1
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> Any:
         """Get performance statistics"""
         if not self.inference_times:
             return None
@@ -229,7 +229,7 @@ class PerformanceTracker:
 ### Speedup: {speedup:.2f}x faster with CUDA! 🚀
 """
 
-    def get_chart_data(self) -> dict:
+    def get_chart_data(self) -> Any:
         """Get data for real-time chart"""
         if not self.timestamps:
             return None
@@ -2437,14 +2437,17 @@ with gr.Blocks(
         outputs=[train_progress, train_output]
     )
 
+    def update_style_choices():
+        return list(STYLES.keys()) + get_custom_styles()
+
     refresh_styles_btn.click(
-        fn=lambda: gr.update(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0] if STYLES.keys() else None),
+        fn=update_style_choices,
         outputs=[quick_style]
     ).then(
-        fn=lambda: gr.update(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0] if STYLES.keys() else None),
+        fn=update_style_choices,
         outputs=[blend_style1]
     ).then(
-        fn=lambda: gr.update(choices=list(STYLES.keys()) + get_custom_styles(), value=list(STYLES.keys())[0] if STYLES.keys() else None),
+        fn=update_style_choices,
         outputs=[blend_style2]
     )
 
