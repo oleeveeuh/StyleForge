@@ -2185,40 +2185,6 @@ select option,
     z-index: 50 !important;
 }
 
-/* Fix for Gradio 5.x dropdown positioning - ensure dropdown appears above/below button */
-[class*="svelte"] {
-    position: relative !important;
-}
-
-/* Dropdown list/popover positioning - simplified to avoid hiding */
-[role="listbox"],
-[role="option"] {
-    position: absolute !important;
-    z-index: 9999 !important;
-    background: rgba(255, 255, 255, 0.98) !important;
-    backdrop-filter: blur(20px) saturate(180%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.6) !important;
-    border-radius: 14px !important;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2) !important;
-    max-height: 350px !important;
-    overflow-y: auto !important;
-    min-width: 200px !important;
-}
-
-/* Dropdown option items */
-[role="option"] {
-    padding: 12px 16px !important;
-    cursor: pointer !important;
-    transition: all 0.2s ease !important;
-    border-radius: 8px !important;
-    margin: 4px 8px !important;
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-}
-
-[role="option"]:hover {
-    background: rgba(99, 102, 241, 0.1) !important;
-}
-
 /* Image containers - glass frame */
 .image-container,
 [class*="image"] {
