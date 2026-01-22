@@ -1684,7 +1684,10 @@ def process_webcam_frame(image: Image.Image, style: str, backend: str, intensity
 
         return output_image
 
-    except Exception:
+    except Exception as e:
+        print(f"Webcam processing error: {e}")
+        import traceback
+        traceback.print_exc()
         return image
 
 
@@ -1888,14 +1891,17 @@ if SPACES_AVAILABLE:
         create_style_blend_output = GPU(create_style_blend_output_impl)
         apply_region_style = GPU(apply_region_style_impl)
         apply_region_style_ui = GPU(apply_region_style_ui_impl)
+        process_webcam_frame = GPU(process_webcam_frame)
     except Exception:
         create_style_blend_output = create_style_blend_output_impl
         apply_region_style = apply_region_style_impl
         apply_region_style_ui = apply_region_style_ui_impl
+        process_webcam_frame = process_webcam_frame
 else:
     create_style_blend_output = create_style_blend_output_impl
     apply_region_style = apply_region_style_impl
     apply_region_style_ui = apply_region_style_ui_impl
+    process_webcam_frame = process_webcam_frame
 
 
 # ============================================================================
@@ -2138,6 +2144,92 @@ select:focus {
     outline: none !important;
 }
 
+/* Dropdown menu fixes */
+.gradio-dropdown,
+.dropdown,
+[class*="dropdown"],
+[class*="Dropdown"] {
+    position: relative !important;
+    z-index: 100 !important;
+}
+
+/* Dropdown menu/option list positioning */
+.gradio-dropdown ul,
+.dropdown ul,
+select option,
+[class*="dropdown"] ul,
+[class*="Dropdown"] ul {
+    position: absolute !important;
+    z-index: 9999 !important;
+    background: rgba(255, 255, 255, 0.95) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
+    max-height: 300px !important;
+    overflow-y: auto !important;
+}
+
+/* Gradio 5.x dropdown container fixes */
+[class*="svelte"][class*="dropdown"],
+[class*="svelte"][class*="radio"],
+[class*="svelte"][class*="radio-item"] {
+    position: relative !important;
+    z-index: 100 !important;
+}
+
+/* Radio button group positioning */
+.gradio-radio,
+[class*="radio"] {
+    position: relative !important;
+    z-index: 50 !important;
+}
+
+/* Fix for Gradio 5.x dropdown positioning - ensure dropdown appears above/below button */
+[class*="svelte"] {
+    position: relative !important;
+}
+
+/* Dropdown list/popover positioning */
+[class*="popover"],
+[class*="popover"],
+[class*="menu"],
+[class*="dropdown-menu"],
+[class*="options"] {
+    position: absolute !important;
+    z-index: 9999 !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2) !important;
+    max-height: 350px !important;
+    overflow-y: auto !important;
+    min-width: 200px !important;
+}
+
+/* Dropdown option items */
+[class*="popover"] [class*="item"],
+[class*="menu"] [class*="item"],
+[class*="dropdown-menu"] [class*="item"],
+[class*="options"] [class*="item"],
+li[class*="option"] {
+    padding: 12px 16px !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+    border-radius: 8px !important;
+    margin: 4px 8px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+
+[class*="popover"] [class*="item"]:hover,
+[class*="menu"] [class*="item"]:hover,
+[class*="dropdown-menu"] [class*="item"]:hover,
+[class*="options"] [class*="item"]:hover,
+li[class*="option"]:hover {
+    background: rgba(99, 102, 241, 0.1) !important;
+}
+
 /* Image containers - glass frame */
 .image-container,
 [class*="image"] {
@@ -2364,6 +2456,41 @@ button[class*="Primary"],
     min-height: 64px !important;
     padding: 20px 32px !important;
     margin: 8px 0 !important;
+}
+
+/* Gradio 5.x Portal/Popover fixes for dropdowns */
+div[id*="root"] > div,
+div[data-testid*="dropdown"],
+div[role="listbox"],
+div[role="option"] {
+    position: relative !important;
+}
+
+/* Fixed position dropdowns (Gradio 5.x uses portals) */
+body > div[id*="portal"],
+body > div[class*="popover"],
+body > div[class*="dropdown"] {
+    position: fixed !important;
+    z-index: 99999 !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
+/* Dropdown list - reduce gap below button */
+.gradio-dropdown ul,
+.dropdown ul,
+[class*="dropdown"] ul,
+[role="listbox"] {
+    margin-top: 4px !important;
+    top: auto !important;
+}
+
+/* Dropdown button itself - ensure it has proper spacing */
+.gradio-dropdown > div,
+[class*="dropdown"] > div {
+    min-height: 48px !important;
+    padding: 12px 16px !important;
+    margin-bottom: 0 !important;
 }
 
 /* Block containers */
@@ -2825,22 +2952,10 @@ with gr.Blocks(
     # Pre-styled example outputs for display
     # These images demonstrate each style without needing to run the model
     gr.Markdown("### Quick Style Examples")
-    gr.Markdown("Click any example to apply that style to your own image, or try the styles below:")
+    gr.Markdown("Upload an image and select a style to see the transformation in action!")
 
-    gr.Examples(
-        examples=[
-            [example_img, "candy", "auto", 70, False, False],
-            [example_img, "mosaic", "auto", 70, False, False],
-            [example_img, "rain_princess", "auto", 70, True, False],
-            [example_img, "udnie", "auto", 70, False, False],
-            [example_img, "starry_night", "auto", 70, False, False],
-            [example_img, "la_muse", "auto", 70, False, False],
-            [example_img, "the_scream", "auto", 70, False, False],
-            [example_img, "composition_vii", "auto", 70, False, False],
-        ],
-        inputs=[quick_image, quick_style, quick_backend, quick_intensity, quick_compare, quick_watermark],
-        label="Style Presets (click to load)"
-    )
+    # Examples removed - they all showed the same input image
+    # The style gallery below shows visual representations of each style
 
     # Display example style gallery with unique gradients for each style
     gr.Markdown("""
