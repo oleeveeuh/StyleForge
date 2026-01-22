@@ -2190,12 +2190,9 @@ select option,
     position: relative !important;
 }
 
-/* Dropdown list/popover positioning */
-[class*="popover"],
-[class*="popover"],
-[class*="menu"],
-[class*="dropdown-menu"],
-[class*="options"] {
+/* Dropdown list/popover positioning - simplified to avoid hiding */
+[role="listbox"],
+[role="option"] {
     position: absolute !important;
     z-index: 9999 !important;
     background: rgba(255, 255, 255, 0.98) !important;
@@ -2209,11 +2206,7 @@ select option,
 }
 
 /* Dropdown option items */
-[class*="popover"] [class*="item"],
-[class*="menu"] [class*="item"],
-[class*="dropdown-menu"] [class*="item"],
-[class*="options"] [class*="item"],
-li[class*="option"] {
+[role="option"] {
     padding: 12px 16px !important;
     cursor: pointer !important;
     transition: all 0.2s ease !important;
@@ -2222,11 +2215,7 @@ li[class*="option"] {
     font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 
-[class*="popover"] [class*="item"]:hover,
-[class*="menu"] [class*="item"]:hover,
-[class*="dropdown-menu"] [class*="item"]:hover,
-[class*="options"] [class*="item"]:hover,
-li[class*="option"]:hover {
+[role="option"]:hover {
     background: rgba(99, 102, 241, 0.1) !important;
 }
 
@@ -2458,39 +2447,12 @@ button[class*="Primary"],
     margin: 8px 0 !important;
 }
 
-/* Gradio 5.x Portal/Popover fixes for dropdowns */
-div[id*="root"] > div,
-div[data-testid*="dropdown"],
-div[role="listbox"],
-div[role="option"] {
-    position: relative !important;
-}
-
-/* Fixed position dropdowns (Gradio 5.x uses portals) */
-body > div[id*="portal"],
-body > div[class*="popover"],
-body > div[class*="dropdown"] {
+/* Gradio 5.x Portal/Popover fixes for dropdowns - simplified */
+body > div[id*="portal"] {
     position: fixed !important;
     z-index: 99999 !important;
     margin-top: 0 !important;
     padding-top: 0 !important;
-}
-
-/* Dropdown list - reduce gap below button */
-.gradio-dropdown ul,
-.dropdown ul,
-[class*="dropdown"] ul,
-[role="listbox"] {
-    margin-top: 4px !important;
-    top: auto !important;
-}
-
-/* Dropdown button itself - ensure it has proper spacing */
-.gradio-dropdown > div,
-[class*="dropdown"] > div {
-    min-height: 48px !important;
-    padding: 12px 16px !important;
-    margin-bottom: 0 !important;
 }
 
 /* Block containers */
